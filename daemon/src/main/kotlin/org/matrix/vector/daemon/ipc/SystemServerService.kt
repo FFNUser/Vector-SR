@@ -17,9 +17,11 @@ object SystemServerService : ILSPSystemServerService.Stub(), IBinder.DeathRecipi
 
   private var proxyServiceName: String? = null
   private var originService: IBinder? = null
+  private var callbackRegistered = false
 
   var systemServerRequested = false
 
+  @Synchronized
   fun registerProxyService(serviceName: String) {
     // Register as the service name early to setup an IPC for `system_server`.
     Log.d(TAG, "Registering bridge service for `system_server` with name `$serviceName`.")
@@ -40,12 +42,29 @@ object SystemServerService : ILSPSystemServerService.Stub(), IBinder.DeathRecipi
             override fun asBinder(): IBinder = this
           }
       runCatching {
-            getSystemServiceManager().registerForNotifications(serviceName, callback)
+            if (!callbackRegistered || proxyServiceName != serviceName) {
+              getSystemServiceManager().registerForNotifications(serviceName, callback)
+              callbackRegistered = true
+            }
             ServiceManager.addService(serviceName, this)
             proxyServiceName = serviceName
           }
           .onFailure { Log.e(TAG, "Failed to register IServiceCallback", it) }
+    } else {
+      runCatching {
+            ServiceManager.addService(serviceName, this)
+            proxyServiceName = serviceName
+          }
+          .onFailure { Log.e(TAG, "Failed to register proxy service `$serviceName`", it) }
     }
+  }
+
+  @Synchronized
+  fun prepareForSystemServerRestart(serviceName: String = proxyServiceName ?: return) {
+    binderDied()
+    systemServerRequested = false
+    runCatching { ServiceManager.addService(serviceName, this) }
+        .onFailure { Log.w(TAG, "Failed to re-claim proxy service `$serviceName`", it) }
   }
 
   override fun requestApplicationService(
@@ -64,13 +83,6 @@ object SystemServerService : ILSPSystemServerService.Stub(), IBinder.DeathRecipi
   }
 
   override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
-    originService?.let {
-      // This is unlikely to happen unless system_server restarts / crashes, since we intentionally
-      // discard our proxy upon later replacements in registerProxyService.
-      Log.d(TAG, "Forwarding request to real `$proxyServiceName` service.")
-      return it.transact(code, data, reply, flags)
-    }
-
     when (code) {
       BRIDGE_TRANSACTION_CODE -> {
         val uid = data.readInt()
@@ -91,6 +103,11 @@ object SystemServerService : ILSPSystemServerService.Stub(), IBinder.DeathRecipi
         return ApplicationService.onTransact(code, data, reply, flags)
       }
       else -> {
+        originService?.let {
+          // Keep bridge transactions handled locally; only proxy non-Vector calls.
+          Log.d(TAG, "Forwarding request to real `$proxyServiceName` service.")
+          return it.transact(code, data, reply, flags)
+        }
         return super.onTransact(code, data, reply, flags)
       }
     }

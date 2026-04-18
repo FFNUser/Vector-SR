@@ -11,8 +11,11 @@ import android.util.Log
 import java.io.File
 import java.io.FileDescriptor
 import java.io.FileInputStream
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.matrix.vector.daemon.VectorDaemon
 
@@ -33,6 +36,10 @@ object Dex2OatServer {
 
   private val dex2oatArray = arrayOfNulls<String>(6)
   private val fdArray = arrayOfNulls<FileDescriptor>(6)
+  private val stateLock = Any()
+  private var serverJob: Job? = null
+  private var serverSocket: LocalServerSocket? = null
+  private val running = AtomicBoolean(false)
 
   @Volatile
   var compatibility = DEX2OAT_OK
@@ -183,20 +190,49 @@ object Dex2OatServer {
   }
 
   fun start() {
-    if (notMounted()) {
-      doMount(true)
-      if (notMounted()) {
-        doMount(false)
-        compatibility = DEX2OAT_MOUNT_FAILED
+    synchronized(stateLock) {
+      if (running.get()) {
+        Log.d(TAG, "Dex2oat wrapper daemon already running, skip duplicate start")
         return
       }
+
+      cleanupSocketStateLocked()
+
+      if (notMounted()) {
+        doMount(true)
+        if (notMounted()) {
+          doMount(false)
+          compatibility = DEX2OAT_MOUNT_FAILED
+          return
+        }
+      }
+
+      compatibility = DEX2OAT_OK
+      selinuxObserver.startWatching()
+      selinuxObserver.onEvent(0, null)
+
+      running.set(true)
+      // Run the socket accept loop in an IO coroutine
+      serverJob = VectorDaemon.scope.launch { runSocketLoop() }
     }
+  }
 
-    selinuxObserver.startWatching()
-    selinuxObserver.onEvent(0, null)
+  fun stop(disableMount: Boolean = false) {
+    synchronized(stateLock) {
+      running.set(false)
+      serverJob?.cancel()
+      serverJob = null
+      cleanupSocketStateLocked()
+      selinuxObserver.stopWatching()
+      if (disableMount && compatibility == DEX2OAT_OK) {
+        doMount(false)
+      }
+    }
+  }
 
-    // Run the socket accept loop in an IO coroutine
-    VectorDaemon.scope.launch { runSocketLoop() }
+  fun restart() {
+    stop()
+    start()
   }
 
   private fun runSocketLoop() {
@@ -220,28 +256,61 @@ object Dex2OatServer {
     SELinux.setFileContext(HOOKER64, xposedFile)
 
     runCatching {
-          LocalServerSocket(sockPath).use { server ->
-            setSockCreateContext(null)
-            while (true) {
-              // This blocks until the C++ wrapper connects
-              server.accept().use { client ->
-                val input = client.inputStream
-                val output = client.outputStream
-                val id = input.read()
-                if (id in fdArray.indices && fdArray[id] != null) {
-                  client.setFileDescriptorsForSend(arrayOf(fdArray[id]!!))
-                  output.write(1)
+          serverSocket = LocalServerSocket(sockPath)
+          setSockCreateContext(null)
+          serverSocket!!.use { server ->
+            while (running.get()) {
+              try {
+                // This blocks until the C++ wrapper connects
+                server.accept().use { client ->
+                  val input = client.inputStream
+                  val output = client.outputStream
+                  val id = input.read()
+                  if (id in fdArray.indices && fdArray[id] != null) {
+                    client.setFileDescriptorsForSend(arrayOf(fdArray[id]!!))
+                    output.write(1)
+                  }
                 }
+              } catch (e: IOException) {
+                if (!running.get()) break
+                throw e
               }
             }
           }
         }
         .onFailure {
           Log.e(TAG, "Dex2oat wrapper daemon crashed", it)
+          setSockCreateContext(null)
+          synchronized(stateLock) {
+            running.set(false)
+            cleanupSocketStateLocked()
+          }
           if (compatibility == DEX2OAT_OK) {
             doMount(false)
             compatibility = DEX2OAT_CRASHED
           }
         }
+        .onSuccess {
+          synchronized(stateLock) {
+            running.set(false)
+            cleanupSocketStateLocked()
+          }
+        }
+  }
+
+  private fun cleanupSocketStateLocked() {
+    runCatching { serverSocket?.close() }
+    serverSocket = null
+
+    val sockPath = runCatching { getSockPath() }.getOrNull()
+    if (!sockPath.isNullOrBlank() && sockPath.startsWith("/")) {
+      runCatching {
+            val socketFile = File(sockPath)
+            if (socketFile.exists()) {
+              socketFile.delete()
+            }
+          }
+          .onFailure { Log.w(TAG, "Failed to clean stale dex2oat socket file: $sockPath", it) }
+    }
   }
 }

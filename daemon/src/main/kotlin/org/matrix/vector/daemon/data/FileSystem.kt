@@ -78,13 +78,20 @@ object FileSystem {
     }
 
     val cliSocket: String = socketPath.toString()
-    val socketFile = File(cliSocket)
-    if (socketFile.exists()) {
-      Log.d(TAG, "Existing $cliSocket deleted")
-      socketFile.delete()
-    }
+    cleanupSocketFile(cliSocket)
 
     return cliSocket
+  }
+
+  fun cleanupSocketFile(path: String) {
+    runCatching {
+          val socketFile = File(path)
+          if (socketFile.exists()) {
+            Log.d(TAG, "Existing socket $path deleted")
+            socketFile.delete()
+          }
+        }
+        .onFailure { Log.w(TAG, "Failed to cleanup stale socket $path", it) }
   }
 
   /** Tries to lock the daemon lockfile. Returns false if another daemon is running. */

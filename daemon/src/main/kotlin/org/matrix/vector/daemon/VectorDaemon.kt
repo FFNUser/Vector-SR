@@ -146,10 +146,11 @@ object VectorDaemon {
                   Log.w(TAG, "System Server died! Clearing caches and re-injecting...")
                   bridgeService.unlinkToDeath(this, 0)
                   clearSystemCaches()
-                  SystemServerService.binderDied() // Cleanup old references
-                  // Re-claim the service name immediately to ensure that when system_server
-                  // restarts, our proxy is already there for the Zygisk module to find.
-                  ServiceManager.addService(proxyServiceName, SystemServerService)
+                  // Ensure stale binder/proxy/socket state is dropped before the next round.
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    Dex2OatServer.restart()
+                  }
+                  SystemServerService.prepareForSystemServerRestart(proxyServiceName)
                   ManagerService.guard = null // Remove dead guard
                   Handler(Looper.getMainLooper()).post {
                     sendToBridge(binder, true, restartRetry - 1)
