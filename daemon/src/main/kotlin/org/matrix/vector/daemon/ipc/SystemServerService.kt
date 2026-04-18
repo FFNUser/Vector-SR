@@ -60,11 +60,12 @@ object SystemServerService : ILSPSystemServerService.Stub(), IBinder.DeathRecipi
   }
 
   @Synchronized
-  fun prepareForSystemServerRestart(serviceName: String = proxyServiceName ?: return) {
+  fun prepareForSystemServerRestart(serviceName: String? = proxyServiceName) {
+    val name = serviceName ?: return
     binderDied()
     systemServerRequested = false
-    runCatching { ServiceManager.addService(serviceName, this) }
-        .onFailure { Log.w(TAG, "Failed to re-claim proxy service `$serviceName`", it) }
+    runCatching { ServiceManager.addService(name, this) }
+        .onFailure { Log.w(TAG, "Failed to re-claim proxy service `$name`", it) }
   }
 
   override fun requestApplicationService(
