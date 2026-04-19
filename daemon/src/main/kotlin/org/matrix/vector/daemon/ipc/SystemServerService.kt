@@ -60,8 +60,17 @@ object SystemServerService : ILSPSystemServerService.Stub(), IBinder.DeathRecipi
   }
 
   @Synchronized
-  fun prepareForSystemServerRestart(serviceName: String? = proxyServiceName) {
+  fun prepareForSystemServerRestart(
+      serviceName: String? = proxyServiceName,
+      ownerInstanceId: String? = null,
+      round: Long? = null,
+  ) {
     val name = serviceName ?: return
+    Log.i(
+        TAG,
+        "Preparing proxy service `$name` for system_server restart" +
+            ownerInstanceId?.let { " owner=$it" }.orEmpty() +
+            round?.let { " round=$it" }.orEmpty())
     binderDied()
     systemServerRequested = false
     runCatching { ServiceManager.addService(name, this) }
