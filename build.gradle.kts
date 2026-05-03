@@ -99,12 +99,6 @@ subprojects {
                     versionName = versionNameProvider.get()
                 }
 
-                val flags =
-                    listOf(
-                        "-DVERSION_CODE=${versionCodeProvider.get()}",
-                        "-DVERSION_NAME='\"${versionNameProvider.get()}\"'",
-                    )
-
                 val args =
                     listOf(
                         "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
@@ -116,8 +110,6 @@ subprojects {
 
                 externalNativeBuild {
                     cmake {
-                        cFlags.addAll(flags)
-                        cppFlags.addAll(flags)
                         arguments.addAll(args)
                     }
                 }
