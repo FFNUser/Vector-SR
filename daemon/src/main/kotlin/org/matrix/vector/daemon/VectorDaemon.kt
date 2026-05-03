@@ -52,12 +52,6 @@ object VectorDaemon {
   fun main(args: Array<String>) {
     if (!FileSystem.tryLock()) kotlin.system.exitProcess(0)
 
-    val ownerState = FileSystem.ensureActiveReinjectionOwner(daemonInstanceId)
-    if (!ownerState.isOwner) {
-      terminateStaleDaemon(
-          "Daemon instance `$daemonInstanceId` is not the active reinjection owner. Active owner=`${ownerState.owner?.toLogString() ?: "unknown"}`.")
-    }
-
     var systemServerMaxRetry = 1
     for (arg in args) {
       if (arg.startsWith("--system-server-max-retry=")) {
@@ -70,7 +64,7 @@ object VectorDaemon {
 
     Log.i(
         TAG,
-        "Vector daemon started: instance=$daemonInstanceId, owner=${ownerState.owner?.toLogString()}, lateInject=$isLateInject, proxy=$proxyServiceName")
+        "Vector daemon started: instance=$daemonInstanceId, lateInject=$isLateInject, proxy=$proxyServiceName")
     Log.i(TAG, "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
 
     Thread.setDefaultUncaughtExceptionHandler { _, e ->
@@ -136,13 +130,6 @@ object VectorDaemon {
       "sendToBridge MUST run on the main thread!"
     }
 
-    val ownerState = FileSystem.ensureActiveReinjectionOwner(daemonInstanceId)
-    if (!ownerState.isOwner) {
-      reinjectionLease?.close()
-      terminateStaleDaemon(
-          "Daemon instance `$daemonInstanceId` lost reinjection ownership before bridge injection. Active owner=`${ownerState.owner?.toLogString() ?: "unknown"}`.")
-    }
-
     Os.seteuid(0)
 
     try {
@@ -151,8 +138,8 @@ object VectorDaemon {
           if (isRestart) {
             Log.w(
                 TAG,
-                "system_server restarted for owner `${ownerState.owner?.toLogString() ?: daemonInstanceId}`" +
-                    reinjectionLease?.let { ", round=${it.round}" }.orEmpty())
+                "system_server restarted for daemon `$daemonInstanceId`" +
+                    reinjectionLease?.let { ", reinjectionRound=${it.round}" }.orEmpty())
           }
 
           while (true) {
@@ -168,48 +155,42 @@ object VectorDaemon {
                 override fun binderDied() {
                   bridgeService.unlinkToDeath(this, 0)
 
-                  val leaseResult = FileSystem.tryAcquireReinjectionLease(daemonInstanceId)
+                  val leaseResult = FileSystem.tryAcquireReinjectionLease()
                   when (leaseResult.status) {
                     FileSystem.ReinjectionLeaseStatus.BUSY -> {
                       Log.i(
                           TAG,
-                          "Daemon `$daemonInstanceId` saw system_server death but reinjection is already in progress by `${leaseResult.owner?.toLogString() ?: "another daemon"}`. Ignoring duplicate callback.")
-                      if (leaseResult.owner?.instanceId != daemonInstanceId) {
-                        terminateStaleDaemon(
-                            "Daemon `$daemonInstanceId` lost restart race to `${leaseResult.owner?.toLogString() ?: "another daemon"}`.")
-                      }
-                    }
-                    FileSystem.ReinjectionLeaseStatus.NOT_OWNER -> {
-                      terminateStaleDaemon(
-                          "Stale daemon `$daemonInstanceId` ignored system_server death. Active owner=`${leaseResult.owner?.toLogString() ?: "unknown"}`.")
+                          "Daemon `$daemonInstanceId` saw system_server death but reinjection is already in progress. Ignoring duplicate callback.")
                     }
                     FileSystem.ReinjectionLeaseStatus.ACQUIRED -> {
                       val lease = leaseResult.lease ?: return
                       Log.w(
                           TAG,
-                          "System Server died! Owner `${leaseResult.owner?.toLogString() ?: daemonInstanceId}` handling reinjection round=${lease.round}.")
-                      try {
-                        clearSystemCaches()
-                        // Ensure stale binder/proxy/socket state is dropped before the next round.
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                          Dex2OatServer.restart()
-                        }
-                        SystemServerService.prepareForSystemServerRestart(
-                            proxyServiceName, daemonInstanceId, lease.round)
-                        ManagerService.guard = null // Remove dead guard
-                        val posted =
-                            Handler(Looper.getMainLooper()).post {
+                          "System Server died! Daemon `$daemonInstanceId` handling reinjection round=${lease.round}.")
+                      val posted =
+                          Handler(Looper.getMainLooper()).post {
+                            try {
+                              withRootIdentity {
+                                clearSystemCaches()
+                                // Ensure stale binder/proxy/socket state is dropped before the next round.
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                  Dex2OatServer.restart()
+                                }
+                                SystemServerService.prepareForSystemServerRestart(
+                                    proxyServiceName, daemonInstanceId, lease.round)
+                                ManagerService.guard = null // Remove dead guard
+                              }
                               sendToBridge(binder, true, restartRetry - 1, lease)
+                            } catch (t: Throwable) {
+                              lease.close()
+                              throw t
                             }
-                        if (!posted) {
-                          Log.e(
-                              TAG,
-                              "Failed to post reinjection round=${lease.round} to the main thread.")
-                          lease.close()
-                        }
-                      } catch (t: Throwable) {
+                          }
+                      if (!posted) {
+                        Log.e(
+                            TAG,
+                            "Failed to post reinjection round=${lease.round} to the main thread.")
                         lease.close()
-                        throw t
                       }
                     }
                   }
@@ -291,9 +272,16 @@ object VectorDaemon {
     SystemProperties.set("ctl.restart", restartTarget)
   }
 
-  private fun terminateStaleDaemon(reason: String): Nothing {
-    Log.w(TAG, "$reason Terminating stale daemon instance.")
-    Process.killProcess(Process.myPid())
-    kotlin.system.exitProcess(0)
+  private inline fun <T> withRootIdentity(block: () -> T): T {
+    val originalEuid = runCatching { Os.geteuid() }.getOrDefault(0)
+    val switched = originalEuid != 0 && runCatching { Os.seteuid(0) }.isSuccess
+    try {
+      return block()
+    } finally {
+      if (switched) {
+        runCatching { Os.seteuid(originalEuid) }
+            .onFailure { Log.w(TAG, "Failed to restore euid to $originalEuid", it) }
+      }
+    }
   }
 }
