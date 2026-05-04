@@ -23,10 +23,10 @@ private const val TAG = "VectorDex2Oat"
 
 // Compatibility states matching Manager expectations
 const val DEX2OAT_OK = 0
-const val DEX2OAT_MOUNT_FAILED = 1
-const val DEX2OAT_SEPOLICY_INCORRECT = 2
+const val DEX2OAT_CRASHED = 1
+const val DEX2OAT_MOUNT_FAILED = 2
 const val DEX2OAT_SELINUX_PERMISSIVE = 3
-const val DEX2OAT_CRASHED = 4
+const val DEX2OAT_SEPOLICY_INCORRECT = 4
 
 object Dex2OatServer {
   private const val WRAPPER32 = "bin/dex2oat32"
@@ -189,6 +189,18 @@ object Dex2OatServer {
     doMountNative(enabled, dex2oatArray[0], dex2oatArray[1], dex2oatArray[2], dex2oatArray[3])
   }
 
+  private fun ensureMountedLocked(): Boolean {
+    if (!notMounted()) return true
+
+    doMount(true)
+    if (notMounted()) {
+      doMount(false)
+      compatibility = DEX2OAT_MOUNT_FAILED
+      return false
+    }
+    return true
+  }
+
   fun start() {
     synchronized(stateLock) {
       if (running.get()) {
@@ -198,14 +210,7 @@ object Dex2OatServer {
 
       cleanupSocketStateLocked()
 
-      if (notMounted()) {
-        doMount(true)
-        if (notMounted()) {
-          doMount(false)
-          compatibility = DEX2OAT_MOUNT_FAILED
-          return
-        }
-      }
+      if (!ensureMountedLocked()) return
 
       compatibility = DEX2OAT_OK
       selinuxObserver.startWatching()
@@ -233,6 +238,18 @@ object Dex2OatServer {
   fun restart() {
     stop()
     start()
+  }
+
+  fun refreshMount() {
+    var shouldStart = false
+    synchronized(stateLock) {
+      if (running.get()) {
+        if (compatibility == DEX2OAT_OK) ensureMountedLocked()
+      } else {
+        shouldStart = true
+      }
+    }
+    if (shouldStart) start()
   }
 
   private fun runSocketLoop() {

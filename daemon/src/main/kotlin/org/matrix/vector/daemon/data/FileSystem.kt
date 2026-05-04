@@ -56,14 +56,27 @@ object FileSystem {
 
   private val formatter = DateTimeFormatter.ISO_LOCAL_DATE_TIME.withZone(ZoneId.systemDefault())
   private val lockPath: Path = basePath.resolve("lock")
+  private val reinjectionOwnerPath: Path = basePath.resolve("vector_reinjection_owner")
+  private val reinjectionOwnerLockPath: Path = basePath.resolve("vector_reinjection_owner.lock")
   private val reinjectionRestartLockPath: Path = basePath.resolve("vector_reinjection_restart.lock")
   private val reinjectionRoundPath: Path = basePath.resolve("vector_reinjection_round")
   private var fileLock: FileLock? = null
   private var lockChannel: FileChannel? = null
 
+  data class ReinjectionOwner(val instanceId: String, val pid: Int, val claimedAtMillis: Long) {
+    fun toLogString(): String = "$instanceId(pid=$pid, claimedAt=$claimedAtMillis)"
+  }
+
+  data class ReinjectionOwnerState(
+      val isOwner: Boolean,
+      val owner: ReinjectionOwner?,
+      val ownershipChanged: Boolean
+  )
+
   enum class ReinjectionLeaseStatus {
     ACQUIRED,
     BUSY,
+    NOT_OWNER,
   }
 
   class ReinjectionLease internal constructor(
@@ -85,7 +98,9 @@ object FileSystem {
 
   data class ReinjectionLeaseResult(
       val status: ReinjectionLeaseStatus,
+      val owner: ReinjectionOwner?,
       val lease: ReinjectionLease? = null,
+      val ownershipChanged: Boolean = false,
   )
 
   init {
@@ -140,7 +155,13 @@ object FileSystem {
 
   fun createDaemonInstanceId(): String = "${Process.myPid()}@${System.currentTimeMillis()}"
 
-  fun tryAcquireReinjectionLease(): ReinjectionLeaseResult {
+  fun ensureActiveReinjectionOwner(instanceId: String): ReinjectionOwnerState {
+    return withRootFileAccess {
+      withReinjectionMetadataLock { ensureActiveReinjectionOwnerLocked(instanceId) }
+    }
+  }
+
+  fun tryAcquireReinjectionLease(instanceId: String): ReinjectionLeaseResult {
     return withRootFileAccess {
       preparePrivateFile(reinjectionRestartLockPath)
       val channel =
@@ -151,7 +172,8 @@ object FileSystem {
               }
               .onFailure { Log.e(TAG, "Failed to open reinjection restart lock", it) }
               .getOrNull()
-              ?: return@withRootFileAccess ReinjectionLeaseResult(ReinjectionLeaseStatus.BUSY)
+              ?: return@withRootFileAccess ReinjectionLeaseResult(
+                  ReinjectionLeaseStatus.BUSY, readActiveReinjectionOwner())
 
       val lock =
           try {
@@ -165,14 +187,33 @@ object FileSystem {
 
       if (lock == null) {
         runCatching { channel.close() }
-        return@withRootFileAccess ReinjectionLeaseResult(ReinjectionLeaseStatus.BUSY)
+        return@withRootFileAccess ReinjectionLeaseResult(
+            ReinjectionLeaseStatus.BUSY, readActiveReinjectionOwner())
       }
 
-      val round = nextReinjectionRound()
+      lateinit var currentOwnerState: ReinjectionOwnerState
+      var round = 0L
+      withReinjectionMetadataLock {
+        currentOwnerState = ensureActiveReinjectionOwnerLocked(instanceId)
+        if (currentOwnerState.isOwner) {
+          round = nextReinjectionRoundLocked()
+        }
+      }
+
+      if (!currentOwnerState.isOwner) {
+        runCatching { lock.release() }
+        runCatching { channel.close() }
+        return@withRootFileAccess ReinjectionLeaseResult(
+            ReinjectionLeaseStatus.NOT_OWNER,
+            currentOwnerState.owner,
+            ownershipChanged = currentOwnerState.ownershipChanged)
+      }
 
       ReinjectionLeaseResult(
           ReinjectionLeaseStatus.ACQUIRED,
-          ReinjectionLease(round, channel, lock))
+          currentOwnerState.owner,
+          ReinjectionLease(round, channel, lock),
+          currentOwnerState.ownershipChanged)
     }
   }
 
@@ -533,7 +574,110 @@ object FileSystem {
     return logDirPath.resolve(getNewLogFileName("modules")).toFile()
   }
 
-  private fun nextReinjectionRound(): Long {
+  private fun readActiveReinjectionOwner(): ReinjectionOwner? {
+    return withRootFileAccess { withReinjectionMetadataLock { readReinjectionOwnerLocked() } }
+  }
+
+  private inline fun <T> withReinjectionMetadataLock(block: () -> T): T {
+    preparePrivateFile(reinjectionOwnerLockPath)
+    val channel =
+        FileChannel.open(
+            reinjectionOwnerLockPath,
+            setOf(StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE))
+    channel.use { lockedChannel ->
+      val lock = lockedChannel.lock()
+      try {
+        return block()
+      } finally {
+        runCatching { lock.release() }
+      }
+    }
+  }
+
+  private fun ensureActiveReinjectionOwnerLocked(instanceId: String): ReinjectionOwnerState {
+    val currentOwner = readReinjectionOwnerLocked()
+    val pid = Process.myPid()
+    if (currentOwner?.instanceId == instanceId && currentOwner.pid == pid) {
+      return ReinjectionOwnerState(true, currentOwner, false)
+    }
+    if (currentOwner != null && isPidAlive(currentOwner.pid)) {
+      return ReinjectionOwnerState(false, currentOwner, false)
+    }
+
+    val newOwner = ReinjectionOwner(instanceId, pid, System.currentTimeMillis())
+    if (!writeReinjectionOwnerLocked(newOwner)) {
+      Log.e(TAG, "Failed to claim reinjection ownership for `${newOwner.toLogString()}`")
+      return ReinjectionOwnerState(false, currentOwner, false)
+    }
+    Log.i(
+        TAG,
+        "Reinjection owner changed from `${currentOwner?.toLogString() ?: "none"}` to `${newOwner.toLogString()}`")
+    return ReinjectionOwnerState(true, newOwner, true)
+  }
+
+  private fun readReinjectionOwnerLocked(): ReinjectionOwner? {
+    if (!reinjectionOwnerPath.exists()) return null
+    return runCatching {
+          Files.newBufferedReader(reinjectionOwnerPath).use { reader ->
+            parseReinjectionOwner(reader.readLine())
+          }
+        }
+        .onFailure { Log.w(TAG, "Failed to read reinjection owner state", it) }
+        .getOrNull()
+  }
+
+  private fun writeReinjectionOwnerLocked(owner: ReinjectionOwner): Boolean {
+    preparePrivateFile(reinjectionOwnerPath)
+    return runCatching {
+          Files.newBufferedWriter(
+                  reinjectionOwnerPath,
+                  StandardOpenOption.CREATE,
+                  StandardOpenOption.TRUNCATE_EXISTING,
+                  StandardOpenOption.WRITE)
+              .use { writer ->
+                writer.write(
+                    listOf(owner.instanceId, owner.pid.toString(), owner.claimedAtMillis.toString())
+                        .joinToString("|"))
+              }
+          true
+        }
+        .onFailure { Log.e(TAG, "Failed to persist reinjection owner state", it) }
+        .getOrDefault(false)
+  }
+
+  private fun parseReinjectionOwner(raw: String?): ReinjectionOwner? {
+    val value = raw?.trim().orEmpty()
+    if (value.isEmpty()) return null
+    val parts = value.split('|')
+    if (parts.size != 3) return null
+    val pid = parts[1].toIntOrNull() ?: return null
+    val claimedAt = parts[2].toLongOrNull() ?: return null
+    return ReinjectionOwner(parts[0], pid, claimedAt)
+  }
+
+  private fun isPidAlive(pid: Int): Boolean {
+    if (pid <= 0) return false
+
+    val procVisible = Files.exists(Paths.get("/proc/$pid"))
+    return runCatching {
+          Os.kill(pid, 0)
+          true
+        }
+        .recover { e ->
+          if (e is ErrnoException) {
+            when (e.errno) {
+              OsConstants.ESRCH -> false
+              OsConstants.EPERM -> true
+              else -> procVisible
+            }
+          } else {
+            procVisible
+          }
+        }
+        .getOrDefault(procVisible)
+  }
+
+  private fun nextReinjectionRoundLocked(): Long {
     preparePrivateFile(reinjectionRoundPath)
     val current =
         runCatching {
