@@ -25,17 +25,18 @@ android {
         buildConfigField("String", "InjectedPackageName", """"${injectedPackageName}"""")
         buildConfigField("String", "ManagerPackageName", """"${defaultManagerPackageName}"""")
 
-        val flags =
+        val args =
             listOf(
-                "-DINJECTED_PACKAGE_NAME='\"${injectedPackageName}\"'",
-                "-DINJECTED_PACKAGE_UID=${injectedPackageUid}",
-                "-DMANAGER_PACKAGE_NAME='\"${defaultManagerPackageName}\"'",
+                "-DVECTOR_INJECTED_PACKAGE_NAME=${injectedPackageName}",
+                "-DVECTOR_INJECTED_PACKAGE_UID=${injectedPackageUid}",
+                "-DVECTOR_MANAGER_PACKAGE_NAME=${defaultManagerPackageName}",
+                "-DVECTOR_VERSION_CODE=${versionCodeProvider.get()}",
+                "-DVECTOR_VERSION_NAME=${versionNameProvider.get()}",
             )
 
         externalNativeBuild {
             cmake {
-                cFlags.addAll(flags)
-                cppFlags.addAll(flags)
+                arguments.addAll(args)
             }
         }
     }

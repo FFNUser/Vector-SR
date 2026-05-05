@@ -11,8 +11,11 @@ import android.util.Log
 import java.io.File
 import java.io.FileDescriptor
 import java.io.FileInputStream
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.matrix.vector.daemon.VectorDaemon
 
@@ -20,10 +23,10 @@ private const val TAG = "VectorDex2Oat"
 
 // Compatibility states matching Manager expectations
 const val DEX2OAT_OK = 0
-const val DEX2OAT_MOUNT_FAILED = 1
-const val DEX2OAT_SEPOLICY_INCORRECT = 2
+const val DEX2OAT_CRASHED = 1
+const val DEX2OAT_MOUNT_FAILED = 2
 const val DEX2OAT_SELINUX_PERMISSIVE = 3
-const val DEX2OAT_CRASHED = 4
+const val DEX2OAT_SEPOLICY_INCORRECT = 4
 
 object Dex2OatServer {
   private const val WRAPPER32 = "bin/dex2oat32"
@@ -33,6 +36,10 @@ object Dex2OatServer {
 
   private val dex2oatArray = arrayOfNulls<String>(6)
   private val fdArray = arrayOfNulls<FileDescriptor>(6)
+  private val stateLock = Any()
+  private var serverJob: Job? = null
+  private var serverSocket: LocalServerSocket? = null
+  private val running = AtomicBoolean(false)
 
   @Volatile
   var compatibility = DEX2OAT_OK
@@ -94,24 +101,6 @@ object Dex2OatServer {
         }
       }
 
-  init {
-    // Android 10 vs 11+ path differences
-    if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
-      checkAndAddDex2Oat("/apex/com.android.runtime/bin/dex2oat")
-      checkAndAddDex2Oat("/apex/com.android.runtime/bin/dex2oatd")
-      checkAndAddDex2Oat("/apex/com.android.runtime/bin/dex2oat64")
-      checkAndAddDex2Oat("/apex/com.android.runtime/bin/dex2oatd64")
-    } else {
-      checkAndAddDex2Oat("/apex/com.android.art/bin/dex2oat32")
-      checkAndAddDex2Oat("/apex/com.android.art/bin/dex2oatd32")
-      checkAndAddDex2Oat("/apex/com.android.art/bin/dex2oat64")
-      checkAndAddDex2Oat("/apex/com.android.art/bin/dex2oatd64")
-    }
-
-    openDex2oat(4, "/data/adb/modules/zygisk_vector/bin/liboat_hook32.so")
-    openDex2oat(5, "/data/adb/modules/zygisk_vector/bin/liboat_hook64.so")
-  }
-
   private fun hasSePolicyErrors(): Boolean {
     return SELinux.checkSELinuxAccess(
         "u:r:untrusted_app:s0", "u:object_r:dex2oat_exec:s0", "file", "execute") ||
@@ -119,11 +108,14 @@ object Dex2OatServer {
             "u:r:untrusted_app:s0", "u:object_r:dex2oat_exec:s0", "file", "execute_no_trans")
   }
 
-  private fun openDex2oat(id: Int, path: String) {
-    runCatching {
-      fdArray[id] = Os.open(path, OsConstants.O_RDONLY, 0)
-      dex2oatArray[id] = path
-    }
+  private fun openDex2oat(id: Int, path: String): Boolean {
+    return runCatching {
+          val fd = Os.open(path, OsConstants.O_RDONLY, 0)
+          fdArray[id] = fd
+          dex2oatArray[id] = path
+        }
+        .onFailure { Log.w(TAG, "Failed to open dex2oat resource: $path", it) }
+        .isSuccess
   }
 
   private fun checkAndAddDex2Oat(path: String) {
@@ -153,13 +145,84 @@ object Dex2OatServer {
                 }
 
             if (index != -1 && dex2oatArray[index] == null) {
+              val fd = Os.open(path, OsConstants.O_RDONLY, 0)
               dex2oatArray[index] = path
-              fdArray[index] = Os.open(path, OsConstants.O_RDONLY, 0)
+              fdArray[index] = fd
               Log.i(TAG, "Detected $path -> Assigned Index $index")
             }
           }
         }
-        .onFailure { dex2oatArray[dex2oatArray.indexOf(path)] = null }
+        .onFailure { Log.w(TAG, "Failed to open dex2oat: $path", it) }
+  }
+
+  private fun dex2oatCandidates(): List<String> {
+    return if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+      listOf(
+          "/apex/com.android.runtime/bin/dex2oat",
+          "/apex/com.android.runtime/bin/dex2oatd",
+          "/apex/com.android.runtime/bin/dex2oat64",
+          "/apex/com.android.runtime/bin/dex2oatd64")
+    } else {
+      listOf(
+          "/apex/com.android.art/bin/dex2oat32",
+          "/apex/com.android.art/bin/dex2oatd32",
+          "/apex/com.android.art/bin/dex2oat64",
+          "/apex/com.android.art/bin/dex2oatd64")
+    }
+  }
+
+  private fun clearDex2OatMountsLocked() {
+    val paths = dex2oatCandidates()
+    doMountNative(
+        false, paths.getOrNull(0), paths.getOrNull(1), paths.getOrNull(2), paths.getOrNull(3))
+  }
+
+  private fun closeDex2OatStateLocked() {
+    for (i in fdArray.indices) {
+      fdArray[i]?.let { fd ->
+        runCatching { Os.close(fd) }
+            .onFailure { Log.w(TAG, "Failed to close stale dex2oat fd[$i]", it) }
+      }
+      fdArray[i] = null
+      dex2oatArray[i] = null
+    }
+  }
+
+  private fun reopenDex2OatStateLocked() {
+    dex2oatCandidates().forEach { checkAndAddDex2Oat(it) }
+    openDex2oat(4, "/data/adb/modules/zygisk_vector/$HOOKER32")
+    openDex2oat(5, "/data/adb/modules/zygisk_vector/$HOOKER64")
+  }
+
+  private fun sameFile(fd: FileDescriptor, path: String): Boolean {
+    return runCatching {
+          val fdStat = Os.fstat(fd)
+          val pathStat = Os.stat(path)
+          fdStat.st_dev == pathStat.st_dev && fdStat.st_ino == pathStat.st_ino
+        }
+        .getOrDefault(false)
+  }
+
+  private fun validateOriginalDex2OatFdLocked(): Boolean {
+    val checks = listOf(0 to WRAPPER32, 1 to WRAPPER32, 2 to WRAPPER64, 3 to WRAPPER64)
+    for ((index, wrapperPath) in checks) {
+      val fd = fdArray[index] ?: continue
+      if (sameFile(fd, wrapperPath)) {
+        Log.e(TAG, "dex2oat fd[$index] points to Vector wrapper; refusing to start")
+        compatibility = DEX2OAT_MOUNT_FAILED
+        return false
+      }
+    }
+    return true
+  }
+
+  private fun resetDex2OatStateLocked(): Boolean {
+    clearDex2OatMountsLocked()
+    closeDex2OatStateLocked()
+    reopenDex2OatStateLocked()
+    val valid = validateOriginalDex2OatFdLocked()
+    if (!valid) closeDex2OatStateLocked()
+    return valid
   }
 
   private fun notMounted(): Boolean {
@@ -182,21 +245,69 @@ object Dex2OatServer {
     doMountNative(enabled, dex2oatArray[0], dex2oatArray[1], dex2oatArray[2], dex2oatArray[3])
   }
 
-  fun start() {
+  private fun ensureMountedLocked(): Boolean {
+    if (!notMounted()) return true
+
+    doMount(true)
     if (notMounted()) {
-      doMount(true)
-      if (notMounted()) {
-        doMount(false)
-        compatibility = DEX2OAT_MOUNT_FAILED
+      doMount(false)
+      compatibility = DEX2OAT_MOUNT_FAILED
+      return false
+    }
+    return true
+  }
+
+  fun start() {
+    synchronized(stateLock) {
+      if (running.get()) {
+        Log.d(TAG, "Dex2oat wrapper daemon already running, skip duplicate start")
         return
       }
+
+      cleanupSocketStateLocked()
+
+      if (!resetDex2OatStateLocked()) return
+
+      if (!ensureMountedLocked()) return
+
+      compatibility = DEX2OAT_OK
+      selinuxObserver.startWatching()
+      selinuxObserver.onEvent(0, null)
+
+      running.set(true)
+      // Run the socket accept loop in an IO coroutine
+      serverJob = VectorDaemon.scope.launch { runSocketLoop() }
     }
+  }
 
-    selinuxObserver.startWatching()
-    selinuxObserver.onEvent(0, null)
+  fun stop(disableMount: Boolean = false) {
+    synchronized(stateLock) {
+      running.set(false)
+      serverJob?.cancel()
+      serverJob = null
+      cleanupSocketStateLocked()
+      selinuxObserver.stopWatching()
+      if (disableMount && compatibility == DEX2OAT_OK) {
+        doMount(false)
+      }
+    }
+  }
 
-    // Run the socket accept loop in an IO coroutine
-    VectorDaemon.scope.launch { runSocketLoop() }
+  fun restart() {
+    stop()
+    start()
+  }
+
+  fun refreshMount() {
+    var shouldStart = false
+    synchronized(stateLock) {
+      if (running.get()) {
+        if (compatibility == DEX2OAT_OK) ensureMountedLocked()
+      } else {
+        shouldStart = true
+      }
+    }
+    if (shouldStart) start()
   }
 
   private fun runSocketLoop() {
@@ -220,28 +331,61 @@ object Dex2OatServer {
     SELinux.setFileContext(HOOKER64, xposedFile)
 
     runCatching {
-          LocalServerSocket(sockPath).use { server ->
-            setSockCreateContext(null)
-            while (true) {
-              // This blocks until the C++ wrapper connects
-              server.accept().use { client ->
-                val input = client.inputStream
-                val output = client.outputStream
-                val id = input.read()
-                if (id in fdArray.indices && fdArray[id] != null) {
-                  client.setFileDescriptorsForSend(arrayOf(fdArray[id]!!))
-                  output.write(1)
+          serverSocket = LocalServerSocket(sockPath)
+          setSockCreateContext(null)
+          serverSocket!!.use { server ->
+            while (running.get()) {
+              try {
+                // This blocks until the C++ wrapper connects
+                server.accept().use { client ->
+                  val input = client.inputStream
+                  val output = client.outputStream
+                  val id = input.read()
+                  if (id in fdArray.indices && fdArray[id] != null) {
+                    client.setFileDescriptorsForSend(arrayOf(fdArray[id]!!))
+                    output.write(1)
+                  }
                 }
+              } catch (e: IOException) {
+                if (!running.get()) break
+                throw e
               }
             }
           }
         }
         .onFailure {
           Log.e(TAG, "Dex2oat wrapper daemon crashed", it)
+          setSockCreateContext(null)
+          synchronized(stateLock) {
+            running.set(false)
+            cleanupSocketStateLocked()
+          }
           if (compatibility == DEX2OAT_OK) {
             doMount(false)
             compatibility = DEX2OAT_CRASHED
           }
         }
+        .onSuccess {
+          synchronized(stateLock) {
+            running.set(false)
+            cleanupSocketStateLocked()
+          }
+        }
+  }
+
+  private fun cleanupSocketStateLocked() {
+    runCatching { serverSocket?.close() }
+    serverSocket = null
+
+    val sockPath = runCatching { getSockPath() }.getOrNull()
+    if (!sockPath.isNullOrBlank() && sockPath.startsWith("/")) {
+      runCatching {
+            val socketFile = File(sockPath)
+            if (socketFile.exists()) {
+              socketFile.delete()
+            }
+          }
+          .onFailure { Log.w(TAG, "Failed to clean stale dex2oat socket file: $sockPath", it) }
+    }
   }
 }

@@ -10,6 +10,24 @@ add_subdirectory(${VECTOR_ROOT}/native native)
 add_library(${PROJECT_NAME} SHARED module.cpp ipc_bridge.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 
+if (NOT DEFINED VECTOR_INJECTED_PACKAGE_NAME)
+    set(VECTOR_INJECTED_PACKAGE_NAME "com.android.shell")
+endif()
+
+if (NOT DEFINED VECTOR_INJECTED_PACKAGE_UID)
+    set(VECTOR_INJECTED_PACKAGE_UID 2000)
+endif()
+
+if (NOT DEFINED VECTOR_MANAGER_PACKAGE_NAME)
+    set(VECTOR_MANAGER_PACKAGE_NAME "org.lsposed.manager")
+endif()
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    INJECTED_PACKAGE_NAME="${VECTOR_INJECTED_PACKAGE_NAME}"
+    INJECTED_PACKAGE_UID=${VECTOR_INJECTED_PACKAGE_UID}
+    MANAGER_PACKAGE_NAME="${VECTOR_MANAGER_PACKAGE_NAME}"
+)
+
 target_link_libraries(${PROJECT_NAME} native log)
 
 if (DEFINED DEBUG_SYMBOLS_PATH)

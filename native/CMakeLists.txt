@@ -9,6 +9,14 @@ add_subdirectory(${VECTOR_ROOT}/external external)
 file(GLOB_RECURSE NATIVE_SOURCES "src/*.cpp")
 add_library(${PROJECT_NAME} STATIC ${NATIVE_SOURCES})
 
+if (NOT DEFINED VECTOR_VERSION_CODE)
+    set(VECTOR_VERSION_CODE 1)
+endif()
+
+if (NOT DEFINED VECTOR_VERSION_NAME)
+    set(VECTOR_VERSION_NAME "1.0")
+endif()
+
 set(IGNORED_WARNINGS
     -Wno-c99-extensions
     -Wno-extra-semi
@@ -31,6 +39,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE src ${VECTOR_ROOT}/external/x
 # --- Compiler Options ---
 # Apply the standard pedantic warnings and the ignored warnings list.
 target_compile_options(${PROJECT_NAME} PRIVATE -Wpedantic ${IGNORED_WARNINGS})
+
+target_compile_definitions(${PROJECT_NAME} PUBLIC
+    VERSION_CODE=${VECTOR_VERSION_CODE}
+    VERSION_NAME="${VECTOR_VERSION_NAME}"
+)
 
 # --- Library Linking ---
 # Link against required external and system libraries.
