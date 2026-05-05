@@ -534,6 +534,8 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
                 appName = item.getAppName();
             }
             holder.appName.setText(appName);
+            holder.moduleApiTag.setVisibility(View.VISIBLE);
+            holder.moduleApiTag.setText(getModuleApiTag(item));
             GlideApp.with(holder.appIcon)
                     .load(item.getPackageInfo())
                     .into(new CustomTarget<Drawable>() {
@@ -678,6 +680,10 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
             this.onPickListener = onPickListener;
         }
 
+        private String getModuleApiTag(ModuleUtil.InstalledModule module) {
+            return module.legacy ? getString(R.string.module_api_legacy) : getString(R.string.module_api_version, module.targetVersion);
+        }
+
         public void refresh() {
             runAsync(reloadModules);
         }
@@ -753,6 +759,7 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
             ImageView appIcon;
             TextView appName;
             TextView appDescription;
+            TextView moduleApiTag;
             TextView appVersion;
             TextView hint;
             MaterialCheckBox checkBox;
@@ -763,6 +770,7 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
                 appIcon = binding.appIcon;
                 appName = binding.appName;
                 appDescription = binding.description;
+                moduleApiTag = binding.moduleApiTag;
                 appVersion = binding.versionName;
                 hint = binding.hint;
                 checkBox = binding.checkbox;
@@ -783,7 +791,8 @@ public class ModulesFragment extends BaseFragment implements ModuleUtil.ModuleLi
                 for (ModuleUtil.InstalledModule info : searchList) {
                     if (lowercaseContains(info.getAppName(), filter) ||
                             lowercaseContains(info.packageName, filter) ||
-                            lowercaseContains(info.getDescription(), filter)) {
+                            lowercaseContains(info.getDescription(), filter) ||
+                            lowercaseContains(getModuleApiTag(info), filter)) {
                         filtered.add(info);
                     }
                 }
