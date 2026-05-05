@@ -101,24 +101,6 @@ object Dex2OatServer {
         }
       }
 
-  init {
-    // Android 10 vs 11+ path differences
-    if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
-      checkAndAddDex2Oat("/apex/com.android.runtime/bin/dex2oat")
-      checkAndAddDex2Oat("/apex/com.android.runtime/bin/dex2oatd")
-      checkAndAddDex2Oat("/apex/com.android.runtime/bin/dex2oat64")
-      checkAndAddDex2Oat("/apex/com.android.runtime/bin/dex2oatd64")
-    } else {
-      checkAndAddDex2Oat("/apex/com.android.art/bin/dex2oat32")
-      checkAndAddDex2Oat("/apex/com.android.art/bin/dex2oatd32")
-      checkAndAddDex2Oat("/apex/com.android.art/bin/dex2oat64")
-      checkAndAddDex2Oat("/apex/com.android.art/bin/dex2oatd64")
-    }
-
-    openDex2oat(4, "/data/adb/modules/zygisk_vector/bin/liboat_hook32.so")
-    openDex2oat(5, "/data/adb/modules/zygisk_vector/bin/liboat_hook64.so")
-  }
-
   private fun hasSePolicyErrors(): Boolean {
     return SELinux.checkSELinuxAccess(
         "u:r:untrusted_app:s0", "u:object_r:dex2oat_exec:s0", "file", "execute") ||
@@ -126,11 +108,14 @@ object Dex2OatServer {
             "u:r:untrusted_app:s0", "u:object_r:dex2oat_exec:s0", "file", "execute_no_trans")
   }
 
-  private fun openDex2oat(id: Int, path: String) {
-    runCatching {
-      fdArray[id] = Os.open(path, OsConstants.O_RDONLY, 0)
-      dex2oatArray[id] = path
-    }
+  private fun openDex2oat(id: Int, path: String): Boolean {
+    return runCatching {
+          val fd = Os.open(path, OsConstants.O_RDONLY, 0)
+          fdArray[id] = fd
+          dex2oatArray[id] = path
+        }
+        .onFailure { Log.w(TAG, "Failed to open dex2oat resource: $path", it) }
+        .isSuccess
   }
 
   private fun checkAndAddDex2Oat(path: String) {
@@ -160,13 +145,84 @@ object Dex2OatServer {
                 }
 
             if (index != -1 && dex2oatArray[index] == null) {
+              val fd = Os.open(path, OsConstants.O_RDONLY, 0)
               dex2oatArray[index] = path
-              fdArray[index] = Os.open(path, OsConstants.O_RDONLY, 0)
+              fdArray[index] = fd
               Log.i(TAG, "Detected $path -> Assigned Index $index")
             }
           }
         }
-        .onFailure { dex2oatArray[dex2oatArray.indexOf(path)] = null }
+        .onFailure { Log.w(TAG, "Failed to open dex2oat: $path", it) }
+  }
+
+  private fun dex2oatCandidates(): List<String> {
+    return if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
+      listOf(
+          "/apex/com.android.runtime/bin/dex2oat",
+          "/apex/com.android.runtime/bin/dex2oatd",
+          "/apex/com.android.runtime/bin/dex2oat64",
+          "/apex/com.android.runtime/bin/dex2oatd64")
+    } else {
+      listOf(
+          "/apex/com.android.art/bin/dex2oat32",
+          "/apex/com.android.art/bin/dex2oatd32",
+          "/apex/com.android.art/bin/dex2oat64",
+          "/apex/com.android.art/bin/dex2oatd64")
+    }
+  }
+
+  private fun clearDex2OatMountsLocked() {
+    val paths = dex2oatCandidates()
+    doMountNative(
+        false, paths.getOrNull(0), paths.getOrNull(1), paths.getOrNull(2), paths.getOrNull(3))
+  }
+
+  private fun closeDex2OatStateLocked() {
+    for (i in fdArray.indices) {
+      fdArray[i]?.let { fd ->
+        runCatching { Os.close(fd) }
+            .onFailure { Log.w(TAG, "Failed to close stale dex2oat fd[$i]", it) }
+      }
+      fdArray[i] = null
+      dex2oatArray[i] = null
+    }
+  }
+
+  private fun reopenDex2OatStateLocked() {
+    dex2oatCandidates().forEach { checkAndAddDex2Oat(it) }
+    openDex2oat(4, "/data/adb/modules/zygisk_vector/$HOOKER32")
+    openDex2oat(5, "/data/adb/modules/zygisk_vector/$HOOKER64")
+  }
+
+  private fun sameFile(fd: FileDescriptor, path: String): Boolean {
+    return runCatching {
+          val fdStat = Os.fstat(fd)
+          val pathStat = Os.stat(path)
+          fdStat.st_dev == pathStat.st_dev && fdStat.st_ino == pathStat.st_ino
+        }
+        .getOrDefault(false)
+  }
+
+  private fun validateOriginalDex2OatFdLocked(): Boolean {
+    val checks = listOf(0 to WRAPPER32, 1 to WRAPPER32, 2 to WRAPPER64, 3 to WRAPPER64)
+    for ((index, wrapperPath) in checks) {
+      val fd = fdArray[index] ?: continue
+      if (sameFile(fd, wrapperPath)) {
+        Log.e(TAG, "dex2oat fd[$index] points to Vector wrapper; refusing to start")
+        compatibility = DEX2OAT_MOUNT_FAILED
+        return false
+      }
+    }
+    return true
+  }
+
+  private fun resetDex2OatStateLocked(): Boolean {
+    clearDex2OatMountsLocked()
+    closeDex2OatStateLocked()
+    reopenDex2OatStateLocked()
+    val valid = validateOriginalDex2OatFdLocked()
+    if (!valid) closeDex2OatStateLocked()
+    return valid
   }
 
   private fun notMounted(): Boolean {
@@ -209,6 +265,8 @@ object Dex2OatServer {
       }
 
       cleanupSocketStateLocked()
+
+      if (!resetDex2OatStateLocked()) return
 
       if (!ensureMountedLocked()) return
 

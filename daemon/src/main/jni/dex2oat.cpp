@@ -1,5 +1,7 @@
 #include <fcntl.h>
+#include <errno.h>
 #include <jni.h>
+#include <limits.h>
 #include <sched.h>
 #include <stdlib.h>
 #include <sys/mount.h>
@@ -20,13 +22,27 @@ struct UniqueFd {
     operator int() const { return fd; }
 };
 
+static void unmount_all(const char *target) {
+    if (target == nullptr) return;
+
+    while (umount2(target, MNT_DETACH) == 0) {
+    }
+
+    if (errno != EINVAL && errno != ENOENT) {
+        PLOGE("umount %s", target);
+    }
+}
+
 extern "C" JNIEXPORT void JNICALL Java_org_matrix_vector_daemon_env_Dex2OatServer_doMountNative(
     JNIEnv *env, jobject, jboolean enabled, jstring r32, jstring d32, jstring r64, jstring d64) {
-    char dex2oat32[PATH_MAX], dex2oat64[PATH_MAX];
-    if (realpath("bin/dex2oat32", dex2oat32) == nullptr) {
+    char dex2oat32[PATH_MAX] = {};
+    char dex2oat64[PATH_MAX] = {};
+    bool has32 = realpath("bin/dex2oat32", dex2oat32) != nullptr;
+    bool has64 = realpath("bin/dex2oat64", dex2oat64) != nullptr;
+    if (!has32) {
         PLOGE("resolve realpath for bin/dex2oat32");
     }
-    if (realpath("bin/dex2oat64", dex2oat64) == nullptr) {
+    if (!has64) {
         PLOGE("resolve realpath for bin/dex2oat64");
     }
 
@@ -52,29 +68,33 @@ extern "C" JNIEXPORT void JNICALL Java_org_matrix_vector_daemon_env_Dex2OatServe
 
         if (enabled) {
             LOGI("Enable dex2oat wrapper");
-            if (r32p) {
+            if (r32p && has32) {
+                unmount_all(r32p);
                 mount(dex2oat32, r32p, nullptr, MS_BIND, nullptr);
                 mount(nullptr, r32p, nullptr, MS_BIND | MS_REMOUNT | MS_RDONLY, nullptr);
             }
-            if (d32p) {
+            if (d32p && has32) {
+                unmount_all(d32p);
                 mount(dex2oat32, d32p, nullptr, MS_BIND, nullptr);
                 mount(nullptr, d32p, nullptr, MS_BIND | MS_REMOUNT | MS_RDONLY, nullptr);
             }
-            if (r64p) {
+            if (r64p && has64) {
+                unmount_all(r64p);
                 mount(dex2oat64, r64p, nullptr, MS_BIND, nullptr);
                 mount(nullptr, r64p, nullptr, MS_BIND | MS_REMOUNT | MS_RDONLY, nullptr);
             }
-            if (d64p) {
+            if (d64p && has64) {
+                unmount_all(d64p);
                 mount(dex2oat64, d64p, nullptr, MS_BIND, nullptr);
                 mount(nullptr, d64p, nullptr, MS_BIND | MS_REMOUNT | MS_RDONLY, nullptr);
             }
             execlp("resetprop", "resetprop", "--delete", "dalvik.vm.dex2oat-flags", nullptr);
         } else {
             LOGI("Disable dex2oat wrapper");
-            if (r32p) umount(r32p);
-            if (d32p) umount(d32p);
-            if (r64p) umount(r64p);
-            if (d64p) umount(d64p);
+            unmount_all(r32p);
+            unmount_all(d32p);
+            unmount_all(r64p);
+            unmount_all(d64p);
             execlp("resetprop", "resetprop", "dalvik.vm.dex2oat-flags", "--inline-max-code-units=0",
                    nullptr);
         }
