@@ -27,6 +27,7 @@ import java.nio.file.StandardOpenOption
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Properties
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -40,6 +41,19 @@ private const val TAG = "VectorFileSystem"
 private const val PRIVATE_FILE_MODE = 0x180 // 0600
 private const val PRIVATE_DIR_MODE = 0x1C0 // 0700
 private const val SYSTEM_FILE_CONTEXT = "u:object_r:system_file:s0"
+private const val FRAMEWORK_API_VERSION = 101
+private const val LEGACY_MAX_API_VERSION = 94
+
+private enum class ModuleLoadStrategy {
+  LEGACY,
+  MODERN,
+  UNSUPPORTED,
+}
+
+private data class ModuleApiVersions(
+    val minApiVersion: Int,
+    val targetApiVersion: Int,
+)
 
 object FileSystem {
   val basePath: Path = Paths.get("/data/adb/lspd")
@@ -259,25 +273,45 @@ object FileSystem {
   }
 
   /** Loads a single DEX file into SharedMemory, optionally applying obfuscation. */
-  private fun readDex(inputStream: InputStream, obfuscate: Boolean): SharedMemory {
-    var memory = SharedMemory.create(null, inputStream.available())
-    val byteBuffer = memory.mapReadWrite()
-    Channels.newChannel(inputStream).read(byteBuffer)
-    SharedMemory.unmap(byteBuffer)
+  private fun readDex(inputStream: InputStream, size: Long, obfuscate: Boolean): SharedMemory {
+    require(size in 1..Int.MAX_VALUE) { "Invalid dex size: $size" }
 
-    if (obfuscate) {
-      val newMemory = ObfuscationManager.obfuscateDex(memory)
-      if (memory !== newMemory) {
-        memory.close()
-        memory = newMemory
+    var memory = SharedMemory.create(null, size.toInt())
+    try {
+      val byteBuffer = memory.mapReadWrite()
+      try {
+        Channels.newChannel(inputStream).use { channel ->
+          while (byteBuffer.hasRemaining()) {
+            if (channel.read(byteBuffer) < 0) {
+              throw java.io.EOFException("Unexpected EOF while reading dex")
+            }
+          }
+        }
+      } finally {
+        SharedMemory.unmap(byteBuffer)
       }
+
+      if (obfuscate) {
+        val newMemory = ObfuscationManager.obfuscateDex(memory)
+        if (memory !== newMemory) {
+          memory.close()
+          memory = newMemory
+        }
+      }
+      memory.setProtect(OsConstants.PROT_READ)
+      return memory
+    } catch (t: Throwable) {
+      memory.close()
+      throw t
     }
-    memory.setProtect(OsConstants.PROT_READ)
-    return memory
   }
 
   /** Parses the module APK, extracts init lists, and loads DEXes into SharedMemory. */
-  fun loadModule(apkPath: String, obfuscate: Boolean): PreLoadedApk? {
+  fun loadModule(
+      apkPath: String,
+      obfuscate: Boolean,
+      fallbackMinApiVersion: Int = 0,
+  ): PreLoadedApk? {
     val file = File(apkPath)
     if (!file.exists()) return null
 
@@ -289,59 +323,32 @@ object FileSystem {
 
     runCatching {
           ZipFile(file).use { zip ->
-            // Parse module.prop to get targetApiVersion
-            val props =
-                zip.getEntry("META-INF/xposed/module.prop")?.let { entry ->
-                  zip.getInputStream(entry).bufferedReader().useLines { lines ->
-                    lines
-                        .filter { it.contains("=") }
-                        .associate {
-                          val parts = it.split("=", limit = 2)
-                          parts[0].trim() to parts[1].trim()
-                        }
-                  }
-                } ?: emptyMap()
+            val apiVersions = readModuleApiVersions(zip, fallbackMinApiVersion)
+            val hasModernEntry =
+                zip.getEntry("META-INF/xposed/java_init.list") != null ||
+                    zip.getEntry("META-INF/xposed/native_init.list") != null
+            val hasLegacyEntry =
+                zip.getEntry("assets/xposed_init") != null ||
+                    zip.getEntry("assets/native_init") != null
 
-            val targetApi = props["targetApiVersion"]?.toIntOrNull() ?: 0
-            val hasLegacyFile = zip.getEntry("assets/xposed_init") != null
-
-            // Determine Loading Strategy based on Priority: API 101+ > Legacy > API 100
             val strategy =
-                when {
-                  targetApi >= 101 -> "MODERN"
-                  hasLegacyFile -> "LEGACY"
-                  targetApi == 100 -> "UNSUPPORTED" // API 100 is dropped
-                  else -> "NONE"
-                }
-
-            // Helper to read the list files
-            fun readList(name: String, dest: MutableList<String>) {
-              zip.getEntry(name)?.let { entry ->
-                zip.getInputStream(entry).bufferedReader().useLines { lines ->
-                  lines
-                      .map { it.trim() }
-                      .filter { it.isNotEmpty() && !it.startsWith("#") }
-                      .forEach { dest.add(it) }
-                }
-              }
-            }
+                determineModuleLoadStrategy(apiVersions, hasModernEntry, hasLegacyEntry)
 
             when (strategy) {
-              "MODERN" -> {
+              ModuleLoadStrategy.MODERN -> {
                 isLegacy = false
-                readList("META-INF/xposed/java_init.list", moduleClassNames)
-                readList("META-INF/xposed/native_init.list", moduleLibraryNames)
+                readZipList(zip, "META-INF/xposed/java_init.list", moduleClassNames)
+                readZipList(zip, "META-INF/xposed/native_init.list", moduleLibraryNames)
               }
-              "LEGACY" -> {
+              ModuleLoadStrategy.LEGACY -> {
                 isLegacy = true
-                readList("assets/xposed_init", moduleClassNames)
-                readList("assets/native_init", moduleLibraryNames)
+                readZipList(zip, "assets/xposed_init", moduleClassNames)
+                readZipList(zip, "assets/native_init", moduleLibraryNames)
               }
-              "UNSUPPORTED" -> {
-                Log.w(TAG, "Module $apkPath uses API 100 which is no longer supported.")
+              ModuleLoadStrategy.UNSUPPORTED -> {
+                Log.w(TAG, "Module $apkPath uses an unsupported Xposed API version.")
                 return null
               }
-              else -> return null // No valid init files found
             }
 
             if (moduleClassNames.isEmpty()) return null
@@ -351,7 +358,9 @@ object FileSystem {
             while (true) {
               val entryName = if (secondary == 1) "classes.dex" else "classes$secondary.dex"
               val dexEntry = zip.getEntry(entryName) ?: break
-              zip.getInputStream(dexEntry).use { preLoadedDexes.add(readDex(it, obfuscate)) }
+              zip.getInputStream(dexEntry).use {
+                preLoadedDexes.add(readDex(it, dexEntry.size, obfuscate))
+              }
               secondary++
             }
           }
@@ -382,6 +391,48 @@ object FileSystem {
     }
 
     return preLoadedApk
+  }
+
+  private fun readModuleApiVersions(
+      zip: ZipFile,
+      fallbackMinApiVersion: Int,
+  ): ModuleApiVersions {
+    val props = Properties()
+    zip.getEntry("META-INF/xposed/module.prop")?.let { entry ->
+      zip.getInputStream(entry).bufferedReader(Charsets.UTF_8).use { props.load(it) }
+    }
+
+    val minApiVersion =
+        props.getProperty("minApiVersion")?.trim()?.toIntOrNull() ?: fallbackMinApiVersion
+    val targetApiVersion =
+        props.getProperty("targetApiVersion")?.trim()?.toIntOrNull() ?: minApiVersion
+    return ModuleApiVersions(minApiVersion, targetApiVersion)
+  }
+
+  private fun determineModuleLoadStrategy(
+      apiVersions: ModuleApiVersions,
+      hasModernEntry: Boolean,
+      hasLegacyEntry: Boolean,
+  ): ModuleLoadStrategy {
+    return when {
+      hasModernEntry &&
+          apiVersions.minApiVersion <= FRAMEWORK_API_VERSION &&
+          apiVersions.targetApiVersion == FRAMEWORK_API_VERSION -> ModuleLoadStrategy.MODERN
+      hasLegacyEntry && apiVersions.minApiVersion <= LEGACY_MAX_API_VERSION ->
+          ModuleLoadStrategy.LEGACY
+      else -> ModuleLoadStrategy.UNSUPPORTED
+    }
+  }
+
+  private fun readZipList(zip: ZipFile, name: String, dest: MutableList<String>) {
+    zip.getEntry(name)?.let { entry ->
+      zip.getInputStream(entry).bufferedReader().useLines { lines ->
+        lines
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .forEach { dest.add(it) }
+      }
+    }
   }
 
   /** Safely creates the log directory. If a file exists with the same name, it deletes it first. */
@@ -424,7 +475,10 @@ object FileSystem {
   fun getPreloadDex(obfuscate: Boolean): SharedMemory? {
     if (preloadDex == null) {
       runCatching {
-            FileInputStream("framework/lspd.dex").use { preloadDex = readDex(it, obfuscate) }
+            val preloadFile = File("framework/lspd.dex")
+            FileInputStream(preloadFile).use {
+              preloadDex = readDex(it, preloadFile.length(), obfuscate)
+            }
           }
           .onFailure { Log.e(TAG, "Failed to load framework dex", it) }
     }
