@@ -16,7 +16,10 @@ android {
 
     defaultConfig {
         consumerProguardFiles("consumer-rules.pro")
-        buildConfigField("String", "FRAMEWORK_NAME", """"${rootProject.name}"""")
+        // Keep the public libxposed framework name compatible with LSPosed 2.0.
+        // Some modules check getFrameworkName() == "LSPosed" to decide whether
+        // their in-app UI should show the module as activated.
+        buildConfigField("String", "FRAMEWORK_NAME", """"LSPosed"""")
         buildConfigField("String", "VERSION_NAME", """"${versionNameProvider.get()}"""")
         buildConfigField("long", "VERSION_CODE", versionCodeProvider.get())
     }
