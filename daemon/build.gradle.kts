@@ -22,7 +22,9 @@ android {
         "DEFAULT_MANAGER_PACKAGE_NAME",
         """"$defaultManagerPackageName"""",
     )
-    buildConfigField("String", "FRAMEWORK_NAME", """"${rootProject.name}"""")
+    // Keep the public libxposed framework name compatible with LSPosed 2.0.
+    // Some module companion apps check getFrameworkName() == "LSPosed".
+    buildConfigField("String", "FRAMEWORK_NAME", """"LSPosed"""")
     buildConfigField("String", "MANAGER_INJECTED_PKG_NAME", """"$injectedPackageName"""")
     buildConfigField("int", "MANAGER_INJECTED_UID", """$injectedPackageUid""")
     buildConfigField("String", "VERSION_NAME", """"${versionNameProvider.get()}"""")
