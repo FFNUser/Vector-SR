@@ -216,13 +216,15 @@ object Dex2OatServer {
     return true
   }
 
-  private fun resetDex2OatStateLocked(): Boolean {
-    clearDex2OatMountsLocked()
-    closeDex2OatStateLocked()
-    reopenDex2OatStateLocked()
-    val valid = validateOriginalDex2OatFdLocked()
-    if (!valid) closeDex2OatStateLocked()
-    return valid
+  private fun resetDex2OatStateLocked(clearMounts: Boolean = false): Boolean {
+      if (clearMounts) {
+          clearDex2OatMountsLocked()
+      }
+      closeDex2OatStateLocked()
+      reopenDex2OatStateLocked()
+      val valid = validateOriginalDex2OatFdLocked()
+      if (!valid) closeDex2OatStateLocked()
+      return valid
   }
 
   private fun notMounted(): Boolean {
