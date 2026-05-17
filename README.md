@@ -1,13 +1,13 @@
 <div align="center">
 
-# vector-SR Framework
+# Vector-SR Framework
 
 **A Vector fork focused on soft-restart reliability under KernelSU jailbreak mode**
 
-[![Build](https://img.shields.io/github/actions/workflow/status/byemaxx/vector-SR/core.yml?branch=master&event=push&logo=github&label=Build)](https://github.com/byemaxx/vector-SR/actions/workflows/core.yml?query=event%3Apush+branch%3Amaster+is%3Acompleted)
+[![Build](https://img.shields.io/github/actions/workflow/status/byemaxx/Vector-SR/core.yml?branch=master&event=push&logo=github&label=Build)](https://github.com/byemaxx/Vector-SR/actions/workflows/core.yml?query=event%3Apush+branch%3Amaster+is%3Acompleted)
 [![Crowdin](https://img.shields.io/badge/Localization-Crowdin-blueviolet?logo=Crowdin)](https://crowdin.com/project/lsposed_jingmatrix)
-[![Download](https://img.shields.io/github/v/release/byemaxx/vector-SR?color=orange&logoColor=orange&label=Download&logo=DocuSign)](https://github.com/byemaxx/vector-SR/releases/latest)
-[![Total](https://shields.io/github/downloads/byemaxx/vector-SR/total?logo=Bookmeter&label=Counts&logoColor=yellow&color=yellow)](https://github.com/byemaxx/vector-SR/releases)
+[![Download](https://img.shields.io/github/v/release/byemaxx/Vector-SR?color=orange&logoColor=orange&label=Download&logo=DocuSign)](https://github.com/byemaxx/Vector-SR/releases/latest)
+[![Total](https://shields.io/github/downloads/byemaxx/Vector-SR/total?logo=Bookmeter&label=Counts&logoColor=yellow&color=yellow)](https://github.com/byemaxx/Vector-SR/releases)
 
 </div>
 
@@ -15,9 +15,9 @@
 
 ### Introduction
 
-vector-SR is a fork of [Vector](https://github.com/JingMatrix/Vector), a Zygisk module providing an ART hooking framework that maintains API consistency with the original Xposed. It is engineered on top of [LSPlant](https://github.com/JingMatrix/LSPlant) to deliver a stable, native-level instrumentation environment.
+Vector-SR is a fork of [Vector](https://github.com/JingMatrix/Vector), a Zygisk module providing an ART hooking framework that maintains API consistency with the original Xposed. It is engineered on top of [LSPlant](https://github.com/JingMatrix/LSPlant) to deliver a stable, native-level instrumentation environment.
 
-This fork is maintained at [byemaxx/vector-SR](https://github.com/byemaxx/vector-SR). Its primary focus is improving soft-restart recovery under KernelSU jailbreak mode, including system_server reinjection reliability, stale daemon handling, and dex2oat wrapper robustness after repeated soft restarts.
+This fork is maintained at [byemaxx/Vector-SR](https://github.com/byemaxx/Vector-SR). Its primary focus is improving soft-restart recovery under KernelSU jailbreak mode, including system_server reinjection reliability, stale daemon handling, and dex2oat wrapper robustness after repeated soft restarts.
 
 The framework allows modules to modify system and application behavior in-memory. Because no APK files are modified, changes are non-destructive, easily reversible via reboot, and compatible across various ROMs and Android versions.
 
@@ -25,7 +25,7 @@ The framework allows modules to modify system and application behavior in-memory
 
 ### Compatibility
 
-vector-SR supports devices running **Android 8.1 through Android 17 Beta**, following the compatibility baseline of upstream Vector.
+Vector-SR supports devices running **Android 8.1 through Android 17 Beta**, following the compatibility baseline of upstream Vector.
 
 > [!TIP]
 > This framework requires a recent installation of Magisk or KernelSU with Zygisk enabled. The fork is mainly tested and maintained around KernelSU jailbreak mode soft-restart scenarios.
@@ -46,8 +46,8 @@ vector-SR supports devices running **Android 8.1 through Android 17 Beta**, foll
 
 | Channel | Source |
 | :--- | :--- |
-| **Stable Releases** | [GitHub Releases](https://github.com/byemaxx/vector-SR/releases) |
-| **Canary (CI) Builds** | [GitHub Actions](https://github.com/byemaxx/vector-SR/actions/workflows/core.yml?query=branch%3Amaster) |
+| **Stable Releases** | [GitHub Releases](https://github.com/byemaxx/Vector-SR/releases) |
+| **Canary (CI) Builds** | [GitHub Actions](https://github.com/byemaxx/Vector-SR/actions/workflows/core.yml?query=branch%3Amaster) |
 
 > [!NOTE]
 > Debug builds are recommended for users encountering issues or performing troubleshooting.
@@ -65,8 +65,8 @@ vector-SR supports devices running **Android 8.1 through Android 17 Beta**, foll
 
 If you encounter issues or wish to help improve this fork, please use the resources below.
 
-*   **Project:** [byemaxx/vector-SR](https://github.com/byemaxx/vector-SR)
-*   **Issues:** [GitHub Issues](https://github.com/byemaxx/vector-SR/issues)
+*   **Project:** [byemaxx/Vector-SR](https://github.com/byemaxx/Vector-SR)
+*   **Issues:** [GitHub Issues](https://github.com/byemaxx/Vector-SR/issues)
 *   **Upstream:** [JingMatrix/Vector](https://github.com/JingMatrix/Vector)
 *   **Localization:** Upstream localization is handled via [Crowdin](https://crowdin.com/project/lsposed_jingmatrix).
 
@@ -81,16 +81,16 @@ If you encounter issues or wish to help improve this fork, please use the resour
 
 ### Developer Resources
 
-vector-SR supports both legacy and modern hooking standards to ensure broad module compatibility.
+Vector-SR supports both legacy and modern hooking standards to ensure broad module compatibility.
 
 *   [Legacy Xposed API](https://api.xposed.info/)
 *   [Modern libxposed API](https://libxposed.github.io/api/)
 *   [Xposed Module Repository](https://github.com/Xposed-Modules-Repo)
 
 > [!NOTE]
-> vector-SR supports the `libxposed` API via two git submodules: the [module API](./xposed/) and the [service API](./services/).
+> Vector-SR supports the `libxposed` API via two git submodules: the [module API](./xposed/) and the [service API](./services/).
 >
-> A successful GitHub Actions build of the [master](https://github.com/byemaxx/vector-SR/tree/master) branch indicates that this fork builds successfully against the current submodule commits.
+> A successful GitHub Actions build of the [master](https://github.com/byemaxx/Vector-SR/tree/master) branch indicates that this fork builds successfully against the current submodule commits.
 > Developers are suggested to check the exact commits used by this fork when debugging module compatibility.
 
 ---
@@ -121,4 +121,4 @@ This project is based on [Vector](https://github.com/JingMatrix/Vector) and is m
 
 ### License
 
-vector-SR is licensed under the [GNU General Public License v3](http://www.gnu.org/copyleft/gpl.html).
+Vector-SR is licensed under the [GNU General Public License v3](http://www.gnu.org/copyleft/gpl.html).

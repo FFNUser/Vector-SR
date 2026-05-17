@@ -1,7 +1,7 @@
 id=zygisk_vector
-name=Vector
+name=Vector-SR
 version=${versionName} (${versionCode})
 versionCode=${versionCode}
-author=JingMatrix
-description=A modern, Xposed-compatible framework for Android application hooking. (Android 8.1 ~ 16)
-updateJson=https://raw.githubusercontent.com/JingMatrix/LSPosed/master/zygisk/update.json
+author=JingMatrix, byemaxx
+description=A Vector fork focused on KernelSU soft-restart reliability. (Android 8.1 ~ 17 Beta)
+updateJson=

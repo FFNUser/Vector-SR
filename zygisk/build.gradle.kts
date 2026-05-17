@@ -64,7 +64,7 @@ dependencies {
     compileOnly(projects.hiddenapi.stubs)
 }
 
-val zipAll = tasks.register("zipAll") { group = "Vector" }
+val zipAll = tasks.register("zipAll") { group = "Vector-SR" }
 
 androidComponents {
     onVariants(selector().all()) { variant ->
@@ -75,12 +75,12 @@ androidComponents {
         // Stage all files in a temporary directory inside 'build' before zipping
         val tempModuleDir = project.layout.buildDirectory.dir("module/${variant.name}")
         val zipFileName =
-            "Vector-v${versionNameProvider.get()}-${versionCodeProvider.get()}-$variantCapped.zip"
+            "Vector-SR-v${versionNameProvider.get()}-${versionCodeProvider.get()}-$variantCapped.zip"
 
         // Using Sync ensures that stale files from previous runs are removed.
         val prepareModuleFilesTask =
             tasks.register<Sync>("prepareModuleFiles$variantCapped") {
-                group = "Vector Module Packaging"
+                group = "Vector-SR Module Packaging"
                 dependsOn(
                     "assemble$variantCapped",
                     ":app:package$variantCapped",
@@ -167,7 +167,7 @@ androidComponents {
 
         val zipTask =
             tasks.register<Zip>("zip${variantCapped}") {
-                group = "Vector Module Packaging"
+                group = "Vector-SR Module Packaging"
                 dependsOn(prepareModuleFilesTask)
                 archiveFileName = zipFileName
                 destinationDirectory = file("$projectDir/release")

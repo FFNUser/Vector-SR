@@ -54,13 +54,13 @@ extract() {
 # =========================================================
 
 VERSION=$(grep_prop version "${TMPDIR}/module.prop")
-ui_print "- Vector version ${VERSION}"
+ui_print "- Vector-SR version ${VERSION}"
 
 # Disable existing LSPosed installation
 LSPOSED_DIR="/data/adb/modules/zygisk_lsposed"
 if [ -d "$LSPOSED_DIR" ]; then
     ui_print "*********************************************************"
-    ui_print "LSPosed installation detected, disabling it for Vector"
+    ui_print "LSPosed installation detected, disabling it for Vector-SR"
     touch "$LSPOSED_DIR/disable"
     ui_print "*********************************************************"
 fi
@@ -139,4 +139,4 @@ if [ "$(grep_prop ro.maple.enable)" = "1" ]; then
     echo "ro.maple.enable=0" >>"$MODPATH/system.prop"
 fi
 
-ui_print "- Welcome to Vector!"
+ui_print "- Welcome to Vector-SR!"

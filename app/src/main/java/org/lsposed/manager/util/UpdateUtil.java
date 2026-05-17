@@ -46,7 +46,7 @@ import okio.Okio;
 public class UpdateUtil {
     public static void loadRemoteVersion() {
         var request = new Request.Builder()
-                .url("https://api.github.com/repos/JingMatrix/LSPosed/releases/latest")
+                .url("https://api.github.com/repos/byemaxx/Vector-SR/releases/latest")
                 .addHeader("Accept", "application/vnd.github.v3+json")
                 .build();
         var callback = new Callback() {
@@ -81,9 +81,9 @@ public class UpdateUtil {
     private static void checkAssets(JsonObject assets, String releaseNotes) {
         var pref = App.getPreferences();
         var name = assets.get("name").getAsString();
-        var splitName = name.split("-");
+        if (!name.startsWith("Vector") || !name.endsWith(".zip")) return;
         pref.edit()
-                .putInt("latest_version", Integer.parseInt(splitName[2]))
+                .putInt("latest_version", extractVersionCode(name))
                 .putLong("latest_check", Instant.now().getEpochSecond())
                 .putString("release_notes", releaseNotes)
                 .putString("zip_file", null)
@@ -102,6 +102,16 @@ public class UpdateUtil {
                         .apply();
             }
         }
+    }
+
+    private static int extractVersionCode(String assetName) {
+        for (var part : assetName.split("-")) {
+            try {
+                return Integer.parseInt(part);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        throw new IllegalArgumentException("No version code in release asset name: " + assetName);
     }
 
     public static boolean needUpdate() {
