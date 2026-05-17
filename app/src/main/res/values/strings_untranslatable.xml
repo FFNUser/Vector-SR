@@ -18,7 +18,7 @@
   -->
 
 <resources>
-    <string name="app_name" translatable="false">LSPosed</string>
+    <string name="app_name" translatable="false">Vector-SR</string>
     <string name="install_url" translatable="false">https://github.com/byemaxx/Vector-SR#installation</string>
     <string name="latest_url" translatable="false">https://github.com/byemaxx/Vector-SR/releases/latest</string>
     <string name="settings_group_repo" translatable="false">@string/module_repo</string>
