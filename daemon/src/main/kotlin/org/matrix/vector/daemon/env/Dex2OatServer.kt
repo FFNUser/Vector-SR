@@ -208,8 +208,7 @@ object Dex2OatServer {
     for ((index, wrapperPath) in checks) {
       val fd = fdArray[index] ?: continue
       if (sameFile(fd, wrapperPath)) {
-        Log.e(TAG, "dex2oat fd[$index] points to Vector wrapper; refusing to start")
-        compatibility = DEX2OAT_MOUNT_FAILED
+        Log.w(TAG, "dex2oat fd[$index] points to Vector wrapper")
         return false
       }
     }
@@ -217,14 +216,26 @@ object Dex2OatServer {
   }
 
   private fun resetDex2OatStateLocked(clearMounts: Boolean = false): Boolean {
-      if (clearMounts) {
-          clearDex2OatMountsLocked()
-      }
-      closeDex2OatStateLocked()
+    if (clearMounts) {
+      clearDex2OatMountsLocked()
+    }
+
+    closeDex2OatStateLocked()
+    reopenDex2OatStateLocked()
+    if (validateOriginalDex2OatFdLocked()) return true
+
+    closeDex2OatStateLocked()
+
+    if (!clearMounts) {
+      Log.w(TAG, "Detected stale dex2oat wrapper mount; clearing mounts and retrying")
+      clearDex2OatMountsLocked()
       reopenDex2OatStateLocked()
-      val valid = validateOriginalDex2OatFdLocked()
-      if (!valid) closeDex2OatStateLocked()
-      return valid
+      if (validateOriginalDex2OatFdLocked()) return true
+      closeDex2OatStateLocked()
+    }
+
+    compatibility = DEX2OAT_MOUNT_FAILED
+    return false
   }
 
   private fun notMounted(): Boolean {
@@ -302,13 +313,16 @@ object Dex2OatServer {
 
   fun refreshMount() {
     var shouldStart = false
+    var shouldRestart = false
     synchronized(stateLock) {
-      if (running.get()) {
-        if (compatibility == DEX2OAT_OK) ensureMountedLocked()
-      } else {
-        shouldStart = true
+      when {
+        compatibility == DEX2OAT_MOUNT_FAILED || compatibility == DEX2OAT_CRASHED ->
+            shouldRestart = true
+        running.get() && compatibility == DEX2OAT_OK -> ensureMountedLocked()
+        !running.get() -> shouldStart = true
       }
     }
+    if (shouldRestart) restart()
     if (shouldStart) start()
   }
 
