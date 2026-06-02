@@ -10,3 +10,5 @@ build
 /captures
 bin/
 .vscode/
+key.jks
+github-actions-signing.env

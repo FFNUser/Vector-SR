@@ -18,6 +18,7 @@
  */
 
 import java.time.Instant
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.agp.app)
@@ -25,6 +26,28 @@ plugins {
     alias(libs.plugins.autoresconfig)
     alias(libs.plugins.materialthemebuilder)
     alias(libs.plugins.lsplugin.apksign)
+}
+
+val signingPropertyAliases =
+    mapOf(
+        "androidStoreFile" to listOf("signingStoreFile", "androidStoreFile"),
+        "androidStorePassword" to listOf("signingStorePassword", "androidStorePassword"),
+        "androidKeyAlias" to listOf("signingKeyAlias", "androidKeyAlias"),
+        "androidKeyPassword" to listOf("signingKeyPassword", "androidKeyPassword"),
+    )
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.isFile) {
+    val localProperties = Properties()
+    localPropertiesFile.inputStream().use(localProperties::load)
+    val extraProperties = project.extensions.extraProperties
+    signingPropertyAliases.forEach { (targetKey, aliases) ->
+        val value = aliases.firstNotNullOfOrNull { alias ->
+            localProperties.getProperty(alias)?.takeIf(String::isNotBlank)
+        }
+        if (value != null && !project.hasProperty(targetKey)) {
+            extraProperties.set(targetKey, value)
+        }
+    }
 }
 
 apksign {
