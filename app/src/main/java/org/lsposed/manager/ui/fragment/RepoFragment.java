@@ -69,6 +69,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -149,6 +150,10 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
         if (modules != null && repoLoader.isRepoLoaded()) {
             modules.forEach((k, v) -> {
                         if (!processedModules.contains(k.first)) {
+                            if (ModuleUtil.isUpdateIgnored(k.first)) {
+                                processedModules.add(k.first);
+                                return;
+                            }
                             var ver = repoLoader.getModuleLatestVersion(k.first);
                             if (ver != null && ver.upgradable(v.versionCode, v.versionName)) {
                                 ++count[0];
@@ -247,6 +252,14 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
     }
 
     @Override
+    public void onModuleUpdateIgnoreChanged(String packageName) {
+        if (adapter != null) {
+            adapter.refresh();
+        }
+        updateRepoSummary();
+    }
+
+    @Override
     public boolean onMenuItemSelected(@NonNull MenuItem item) {
         int itemId = item.getItemId();
         if (itemId == R.id.item_sort_by_name) {
@@ -287,6 +300,13 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
         }
 
         RepoLoader.ModuleVersion getUpgradableVer(OnlineModule module) {
+            return getUpgradableVer(module, ModuleUtil.getIgnoredModuleUpdates());
+        }
+
+        RepoLoader.ModuleVersion getUpgradableVer(OnlineModule module, Set<String> ignoredUpdates) {
+            if (ignoredUpdates.contains(module.getName())) {
+                return null;
+            }
             ModuleUtil.InstalledModule installedModule = moduleUtil.getModule(module.getName());
             if (installedModule != null) {
                 var ver = repoLoader.getModuleLatestVersion(installedModule.packageName);
@@ -372,12 +392,13 @@ public class RepoFragment extends BaseFragment implements RepoLoader.RepoListene
             channel = App.getPreferences().getString("update_channel", channels[0]);
             int sort = App.getPreferences().getInt("repo_sort", 0);
             boolean upgradableFirst = App.getPreferences().getBoolean("upgradable_first", true);
+            var ignoredUpdates = ModuleUtil.getIgnoredModuleUpdates();
             ConcurrentHashMap<String, Boolean> upgradable = new ConcurrentHashMap<>();
             fullList = modules.parallelStream().filter((onlineModule -> !onlineModule.isHide() && !(repoLoader.getReleases(onlineModule.getName()) != null && repoLoader.getReleases(onlineModule.getName()).isEmpty())))
                     .sorted((a, b) -> {
                         if (upgradableFirst) {
-                            var aUpgrade = upgradable.computeIfAbsent(a.getName(), n -> getUpgradableVer(a) != null);
-                            var bUpgrade = upgradable.computeIfAbsent(b.getName(), n -> getUpgradableVer(b) != null);
+                            var aUpgrade = upgradable.computeIfAbsent(a.getName(), n -> getUpgradableVer(a, ignoredUpdates) != null);
+                            var bUpgrade = upgradable.computeIfAbsent(b.getName(), n -> getUpgradableVer(b, ignoredUpdates) != null);
                             if (aUpgrade && !bUpgrade) return -1;
                             else if (!aUpgrade && bUpgrade) return 1;
                         }
