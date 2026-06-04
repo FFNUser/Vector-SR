@@ -53,6 +53,26 @@ object Dex2OatServer {
       d64: String?
   )
 
+  private external fun enableDex2OatPropertyFallbackNative(): Boolean
+
+  private var dex2OatPropertyFallbackEnabled = false
+
+  private fun enableDex2OatPropertyFallback(reason: String) {
+    if (dex2OatPropertyFallbackEnabled) {
+      Log.i(TAG, "Dex2Oat property fallback already enabled, reason=$reason")
+      return
+    }
+
+    val ok = enableDex2OatPropertyFallbackNative()
+    dex2OatPropertyFallbackEnabled = ok
+
+    if (ok) {
+      Log.w(TAG, "Enabled dex2oat property fallback: $reason")
+    } else {
+      Log.e(TAG, "Failed to enable dex2oat property fallback: $reason")
+    }
+  }
+
   private external fun setSockCreateContext(context: String?): Boolean
 
   private external fun getSockPath(): String
@@ -91,6 +111,7 @@ object Dex2OatServer {
                 if (notMounted()) {
                   doMount(false)
                   compatibility = DEX2OAT_MOUNT_FAILED
+                  enableDex2OatPropertyFallback("wrapper mount failed after SELinux observe retry")
                   stopWatching()
                 } else {
                   compatibility = DEX2OAT_OK
@@ -235,6 +256,7 @@ object Dex2OatServer {
     }
 
     compatibility = DEX2OAT_MOUNT_FAILED
+    enableDex2OatPropertyFallback("wrapper mount failed after soft restart recovery")
     return false
   }
 
@@ -265,6 +287,7 @@ object Dex2OatServer {
     if (notMounted()) {
       doMount(false)
       compatibility = DEX2OAT_MOUNT_FAILED
+      enableDex2OatPropertyFallback("wrapper mount failed after final retry")
       return false
     }
     return true

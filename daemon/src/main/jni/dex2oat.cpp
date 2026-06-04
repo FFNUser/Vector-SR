@@ -109,8 +109,45 @@ extern "C" JNIEXPORT void JNICALL Java_org_matrix_vector_daemon_env_Dex2OatServe
         }
 
         apply_mounts(enabled, dex2oat32, has32, dex2oat64, has64, r32p, d32p, r64p, d64p);
+
+        // Do not mutate dalvik.vm.dex2oat-flags here.
+        // doMount(false) can be a temporary cleanup step during soft restart
+        // recovery, not necessarily a final wrapper failure. Runtime set/delete
+        // of this property can leave property-area hole traces.
         _exit(0);
     }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_matrix_vector_daemon_env_Dex2OatServer_enableDex2OatPropertyFallbackNative(JNIEnv *, jobject) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        PLOGE("Failed to fork for dex2oat property fallback");
+        return JNI_FALSE;
+    }
+
+    if (pid == 0) {
+        execlp("resetprop", "resetprop",
+               "dalvik.vm.dex2oat-flags",
+               "--inline-max-code-units=0",
+               nullptr);
+        PLOGE("Failed to set dalvik.vm.dex2oat-flags fallback");
+        _exit(1);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        PLOGE("Failed to wait for resetprop fallback");
+        return JNI_FALSE;
+    }
+
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        LOGE("resetprop fallback exited abnormally: %d", status);
+        return JNI_FALSE;
+    }
+
+    LOGI("Enabled dex2oat property fallback");
+    return JNI_TRUE;
 }
 
 static int setsockcreatecon_raw(const char *context) {
