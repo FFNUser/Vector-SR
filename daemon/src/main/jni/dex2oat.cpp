@@ -109,15 +109,7 @@ extern "C" JNIEXPORT void JNICALL Java_org_matrix_vector_daemon_env_Dex2OatServe
         }
 
         apply_mounts(enabled, dex2oat32, has32, dex2oat64, has64, r32p, d32p, r64p, d64p);
-        if (enabled) {
-            execlp("resetprop", "resetprop", "--delete", "dalvik.vm.dex2oat-flags", nullptr);
-        } else {
-            execlp("resetprop", "resetprop", "dalvik.vm.dex2oat-flags", "--inline-max-code-units=0",
-                   nullptr);
-        }
-
-        PLOGE("Failed to resetprop");
-        exit(1);
+        _exit(0);
     }
 }
 
