@@ -91,21 +91,49 @@ extern "C" JNIEXPORT void JNICALL Java_org_matrix_vector_daemon_env_Dex2OatServe
     const char *r64p = r64 ? env->GetStringUTFChars(r64, nullptr) : nullptr;
     const char *d64p = d64 ? env->GetStringUTFChars(d64, nullptr) : nullptr;
 
-    apply_mounts(enabled, dex2oat32, has32, dex2oat64, has64, r32p, d32p, r64p, d64p);
-
-    pid_t pid = fork();
-    if (pid > 0) {  // Parent process
-        waitpid(pid, nullptr, 0);
-
-        // Safely release JNI strings in the parent
+    auto release_strings = [&]() {
         if (r32p) env->ReleaseStringUTFChars(r32, r32p);
         if (d32p) env->ReleaseStringUTFChars(d32, d32p);
         if (r64p) env->ReleaseStringUTFChars(r64, r64p);
         if (d64p) env->ReleaseStringUTFChars(d64, d64p);
+    };
+
+    apply_mounts(enabled, dex2oat32, has32, dex2oat64, has64, r32p, d32p, r64p, d64p);
+
+    pid_t pid = fork();
+    if (pid > 0) {  // Parent process
+        int status = 0;
+        pid_t waited;
+        do {
+            waited = waitpid(pid, &status, 0);
+        } while (waited < 0 && errno == EINTR);
+
+        if (waited < 0) {
+            PLOGE("waitpid dex2oat mount namespace child");
+        } else {
+            if (WIFEXITED(status)) {
+                if (WEXITSTATUS(status) != 0) {
+                    LOGE("dex2oat mount namespace child exited with status %d",
+                         WEXITSTATUS(status));
+                }
+            } else {
+                LOGE("dex2oat mount namespace child exited abnormally: %d", status);
+            }
+        }
+
+        release_strings();
+    } else if (pid < 0) {
+        PLOGE("fork dex2oat mount namespace child");
+        release_strings();
     } else if (pid == 0) {  // Child process
         UniqueFd ns(open("/proc/1/ns/mnt", O_RDONLY));
-        if (ns >= 0) {
-            setns(ns, CLONE_NEWNS);
+        if (ns < 0) {
+            PLOGE("open /proc/1/ns/mnt");
+            _exit(1);
+        }
+        if (setns(ns, CLONE_NEWNS) != 0) {
+            PLOGE("setns /proc/1/ns/mnt");
+            _exit(1);
         }
 
         apply_mounts(enabled, dex2oat32, has32, dex2oat64, has64, r32p, d32p, r64p, d64p);

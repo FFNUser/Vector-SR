@@ -339,10 +339,9 @@ object Dex2OatServer {
     var shouldRestart = false
     synchronized(stateLock) {
       when {
-        compatibility == DEX2OAT_MOUNT_FAILED || compatibility == DEX2OAT_CRASHED ->
-            shouldRestart = true
+        compatibility == DEX2OAT_CRASHED -> shouldRestart = true
         running.get() && compatibility == DEX2OAT_OK -> ensureMountedLocked()
-        !running.get() -> shouldStart = true
+        !running.get() && compatibility != DEX2OAT_MOUNT_FAILED -> shouldStart = true
       }
     }
     if (shouldRestart) restart()
