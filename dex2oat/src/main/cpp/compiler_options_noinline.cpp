@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <dlfcn.h>
 
 #include "logging.h"
@@ -7,6 +8,9 @@
 namespace {
 
 using Constructor = void (*)(void*);
+
+constexpr const char* kCompilerOptionsC1 = "_ZN3art15CompilerOptionsC1Ev";
+constexpr const char* kCompilerOptionsC2 = "_ZN3art15CompilerOptionsC2Ev";
 
 Constructor resolve_original(const char* symbol) {
     void* original = dlsym(RTLD_NEXT, symbol);
@@ -37,13 +41,7 @@ void patch_options(void* self) {
 void call_original_and_patch(void* self, const char* symbol) {
     static Constructor original_c1 = nullptr;
     static Constructor original_c2 = nullptr;
-    Constructor* slot = nullptr;
-
-    if (symbol[sizeof("_ZN3art15CompilerOptionsC") - 1] == '1') {
-        slot = &original_c1;
-    } else {
-        slot = &original_c2;
-    }
+    Constructor* slot = std::strcmp(symbol, kCompilerOptionsC1) == 0 ? &original_c1 : &original_c2;
 
     if (*slot == nullptr) {
         *slot = resolve_original(symbol);
@@ -58,9 +56,9 @@ void call_original_and_patch(void* self, const char* symbol) {
 }  // namespace
 
 extern "C" __attribute__((visibility("default"))) void _ZN3art15CompilerOptionsC1Ev(void* self) {
-    call_original_and_patch(self, "_ZN3art15CompilerOptionsC1Ev");
+    call_original_and_patch(self, kCompilerOptionsC1);
 }
 
 extern "C" __attribute__((visibility("default"))) void _ZN3art15CompilerOptionsC2Ev(void* self) {
-    call_original_and_patch(self, "_ZN3art15CompilerOptionsC2Ev");
+    call_original_and_patch(self, kCompilerOptionsC2);
 }
