@@ -18,21 +18,21 @@ object Dex2OatService {
     Log.d(DEX2OAT_SERVICE_TAG, "checking noinline for $apkPath")
 
     if (apkPath.isNullOrBlank()) {
-      Log.d(DEX2OAT_SERVICE_TAG, "noinline needed: empty apkPath")
-      return true
+      Log.w(DEX2OAT_SERVICE_TAG, "noinline not applied: empty apkPath")
+      return false
     }
 
     val normalizedApkPath = normalizePath(apkPath)
     val rootPath = File("/proc/1/root$normalizedApkPath")
     if (!rootPath.exists()) {
-      Log.w(DEX2OAT_SERVICE_TAG, "noinline needed: apk file does not exist: $rootPath")
-      return true
+      Log.w(DEX2OAT_SERVICE_TAG, "noinline not applied: apk file does not exist: $rootPath")
+      return false
     }
 
     val pkg = apkPathToPackage(normalizedApkPath)
     if (pkg == null) {
-      Log.d(DEX2OAT_SERVICE_TAG, "noinline needed: no package found for $normalizedApkPath")
-      return true
+      Log.w(DEX2OAT_SERVICE_TAG, "noinline not applied: no package found for $normalizedApkPath")
+      return false
     }
 
     val selected = PreferenceStore.getInvalidateInlineHookApps()
@@ -80,7 +80,7 @@ object Dex2OatService {
 
   fun onInvalidateInlineHookAppsChanged(added: Set<String>, removed: Set<String>) {
     added.forEach { invalidateCompiledArtifacts(it) }
-    removed.forEach { invalidateCompiledArtifacts(it) }
+    removed.forEach { resetCompiledArtifacts(it) }
   }
 
   private fun apkPathToPackage(apkPath: String): String? {
@@ -114,14 +114,29 @@ object Dex2OatService {
 
   private fun invalidateCompiledArtifacts(pkg: String) {
     Log.i(DEX2OAT_SERVICE_TAG, "invalidate compiled artifacts for $pkg")
-    runCatching {
-          val process = Runtime.getRuntime().exec(arrayOf("cmd", "package", "compile", "--reset", pkg))
+    runCommand("cmd", "package", "compile", "--reset", pkg)
+    runCommand("cmd", "package", "compile", "-m", "speed", "-f", pkg)
+  }
+
+  private fun resetCompiledArtifacts(pkg: String) {
+    Log.i(DEX2OAT_SERVICE_TAG, "reset compiled artifacts for removed noinline app $pkg")
+    runCommand("cmd", "package", "compile", "--reset", pkg)
+  }
+
+  private fun runCommand(vararg command: String): Int? {
+    val commandText = command.joinToString(" ")
+    return runCatching {
+          val process = Runtime.getRuntime().exec(command)
           val exitCode = process.waitFor()
-          if (exitCode != 0) {
-            Log.w(DEX2OAT_SERVICE_TAG, "cmd package compile --reset $pkg exited with $exitCode")
+          if (exitCode == 0) {
+            Log.i(DEX2OAT_SERVICE_TAG, "$commandText exited with 0")
+          } else {
+            Log.w(DEX2OAT_SERVICE_TAG, "$commandText exited with $exitCode")
           }
+          exitCode
         }
-        .onFailure { Log.w(DEX2OAT_SERVICE_TAG, "failed to reset compiled artifacts for $pkg", it) }
+        .onFailure { Log.w(DEX2OAT_SERVICE_TAG, "failed to run $commandText", it) }
+        .getOrNull()
   }
 
   private fun normalizePath(path: String): String = path.removePrefix("/proc/1/root")
