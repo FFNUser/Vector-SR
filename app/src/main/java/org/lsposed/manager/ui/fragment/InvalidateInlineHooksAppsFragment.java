@@ -19,7 +19,6 @@
 
 package org.lsposed.manager.ui.fragment;
 
-import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -51,6 +50,7 @@ import com.bumptech.glide.request.transition.Transition;
 import com.google.android.material.checkbox.MaterialCheckBox;
 
 import org.lsposed.manager.App;
+import org.lsposed.manager.ConfigManager;
 import org.lsposed.manager.R;
 import org.lsposed.manager.adapters.AppHelper;
 import org.lsposed.manager.databinding.FragmentAppListBinding;
@@ -70,11 +70,11 @@ import java.util.stream.Collectors;
 import rikka.core.util.ResourceUtils;
 import rikka.recyclerview.RecyclerViewKt;
 
-public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
+public class InvalidateInlineHooksAppsFragment extends BaseFragment implements MenuProvider {
 
     private FragmentAppListBinding binding;
     private SearchView searchView;
-    private NoInlineAppsAdapter adapter;
+    private InvalidateInlineHooksAppsAdapter adapter;
 
     private final RecyclerView.AdapterDataObserver observer = new RecyclerView.AdapterDataObserver() {
         @Override
@@ -93,7 +93,7 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
         binding.appBar.setLiftable(true);
         binding.fab.setVisibility(View.GONE);
 
-        adapter = new NoInlineAppsAdapter(this);
+        adapter = new InvalidateInlineHooksAppsAdapter(this);
         adapter.setHasStableIds(true);
         adapter.registerAdapterDataObserver(observer);
 
@@ -105,8 +105,8 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
         binding.swipeRefreshLayout.setOnRefreshListener(() -> adapter.refresh(true));
         binding.swipeRefreshLayout.setProgressViewEndTarget(true, binding.swipeRefreshLayout.getProgressViewEndOffset());
 
-        setupToolbar(binding.toolbar, binding.clickView, getString(R.string.no_inline_apps), R.menu.menu_no_inline_apps,
-                view -> ((MainActivity) requireActivity()).hideNoInlineApps());
+        setupToolbar(binding.toolbar, binding.clickView, getString(R.string.invalidate_inline_hooks), R.menu.menu_invalidate_inline_hook_apps,
+                view -> ((MainActivity) requireActivity()).hideInvalidateInlineHooksApps());
         View.OnClickListener listener = v -> {
             if (searchView == null || searchView.isIconified()) {
                 binding.recyclerView.smoothScrollToPosition(0);
@@ -125,7 +125,7 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
         requireActivity().getOnBackPressedDispatcher().addCallback(getViewLifecycleOwner(), new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                ((MainActivity) requireActivity()).hideNoInlineApps();
+                ((MainActivity) requireActivity()).hideInvalidateInlineHooksApps();
             }
         });
     }
@@ -178,13 +178,10 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
     public void onCreateMenu(@NonNull Menu menu, @NonNull MenuInflater menuInflater) {
     }
 
-        private static class NoInlineAppsAdapter extends EmptyStateRecyclerView.EmptyStateAdapter<NoInlineAppsAdapter.ViewHolder> implements Filterable {
+        private static class InvalidateInlineHooksAppsAdapter extends EmptyStateRecyclerView.EmptyStateAdapter<InvalidateInlineHooksAppsAdapter.ViewHolder> implements Filterable {
 
-        private static final String PREF_NO_INLINE_APP_PACKAGES = "no_inline_app_packages";
-
-        private final NoInlineAppsFragment fragment;
+        private final InvalidateInlineHooksAppsFragment fragment;
         private final PackageManager packageManager;
-        private final SharedPreferences preferences;
         private final ModuleUtil moduleUtil;
         private final Drawable defaultIcon;
 
@@ -193,10 +190,9 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
         private List<AppInfo> showList = new ArrayList<>();
         private boolean isLoaded = false;
 
-        private NoInlineAppsAdapter(NoInlineAppsFragment fragment) {
+        private InvalidateInlineHooksAppsAdapter(InvalidateInlineHooksAppsFragment fragment) {
             this.fragment = fragment;
             packageManager = fragment.requireActivity().getPackageManager();
-            preferences = App.getPreferences();
             moduleUtil = ModuleUtil.getInstance();
             defaultIcon = packageManager.getDefaultActivityIcon();
         }
@@ -271,6 +267,7 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
             if (isPackageChecked(checked, info.packageName)) {
                 return false;
             }
+            var preferences = App.getPreferences();
             if (preferences.getBoolean("filter_modules", true) &&
                     moduleUtil.getModule(info.packageName, info.applicationInfo.uid / App.PER_USER_RANGE) != null) {
                 return true;
@@ -289,6 +286,7 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
         }
 
         private int sortApps(AppInfo x, AppInfo y) {
+            var preferences = App.getPreferences();
             Comparator<PackageInfo> comparator = AppHelper.getAppListComparator(preferences.getInt("list_sort", 0), packageManager);
             boolean xChecked = isPackageChecked(x.packageName);
             boolean yChecked = isPackageChecked(y.packageName);
@@ -308,7 +306,7 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
         private void refresh(boolean force) {
             setLoaded(null, false);
             fragment.runAsync(() -> {
-                var selected = loadCheckedPackages();
+                var selected = new HashSet<>(ConfigManager.getInvalidateInlineHookApps());
                 var seen = new HashSet<String>();
                 var tmpList = new ArrayList<AppInfo>();
                 for (var info : AppHelper.getAppList(force)) {
@@ -342,25 +340,14 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
             } else {
                 removePackageEntries(newCheckedPackages, appInfo.packageName);
             }
-            if (saveCheckedPackages(newCheckedPackages)) {
+            if (ConfigManager.setInvalidateInlineHookApps(new ArrayList<>(newCheckedPackages))) {
                 checkedPackages = newCheckedPackages;
-                fragment.showHint(R.string.no_inline_saved, true);
+                fragment.showHint(R.string.invalidate_inline_hooks_saved, true);
                 refresh();
             } else {
-                fragment.showHint(R.string.no_inline_save_failed, true);
+                fragment.showHint(R.string.invalidate_inline_hooks_save_failed, true);
                 buttonView.setChecked(!isChecked);
             }
-        }
-
-        private Set<String> loadCheckedPackages() {
-            var stored = preferences.getStringSet(PREF_NO_INLINE_APP_PACKAGES, null);
-            return stored == null ? new HashSet<>() : new HashSet<>(stored);
-        }
-
-        private boolean saveCheckedPackages(Set<String> packages) {
-            return preferences.edit()
-                    .putStringSet(PREF_NO_INLINE_APP_PACKAGES, new HashSet<>(packages))
-                    .commit();
         }
 
         private boolean isPackageChecked(String packageName) {
@@ -387,6 +374,7 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
 
         private boolean onOptionsItemSelected(MenuItem item) {
             int itemId = item.getItemId();
+            var preferences = App.getPreferences();
             if (itemId == R.id.item_filter_system) {
                 item.setChecked(!item.isChecked());
                 preferences.edit().putBoolean("filter_system_apps", item.isChecked()).apply();
@@ -404,6 +392,7 @@ public class NoInlineAppsFragment extends BaseFragment implements MenuProvider {
         }
 
         private void onPrepareOptionsMenu(@NonNull Menu menu) {
+            var preferences = App.getPreferences();
             menu.findItem(R.id.item_filter_system).setChecked(preferences.getBoolean("filter_system_apps", true));
             menu.findItem(R.id.item_filter_games).setChecked(preferences.getBoolean("filter_games", true));
             menu.findItem(R.id.item_filter_modules).setChecked(preferences.getBoolean("filter_modules", true));

@@ -110,9 +110,9 @@
     <PreferenceCategory android:title="@string/settings_group_compatibility">
         <Preference
             android:icon="@drawable/ic_outline_shield_24"
-            android:key="no_inline_apps"
-            android:summary="@string/no_inline_apps_summary"
-            android:title="@string/no_inline_apps" />
+            android:key="invalidate_inline_hook_apps"
+            android:summary="@string/invalidate_inline_hooks_summary"
+            android:title="@string/invalidate_inline_hooks" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="@string/settings_group_repo">

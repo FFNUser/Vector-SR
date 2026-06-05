@@ -362,12 +362,12 @@ public class SettingsFragment extends BaseFragment {
                     return true;
                 });
             }
-            Preference noInlineApps = findPreference("no_inline_apps");
-            if (noInlineApps != null) {
-                noInlineApps.setEnabled(installed);
-                noInlineApps.setOnPreferenceClickListener(preference -> {
+            Preference invalidateInlineHookApps = findPreference("invalidate_inline_hook_apps");
+            if (invalidateInlineHookApps != null) {
+                invalidateInlineHookApps.setEnabled(installed);
+                invalidateInlineHookApps.setOnPreferenceClickListener(preference -> {
                     MainActivity activity = (MainActivity) requireActivity();
-                    activity.showNoInlineApps();
+                    activity.showInvalidateInlineHooksApps();
                     return true;
                 });
             }

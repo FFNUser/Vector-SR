@@ -12,6 +12,7 @@ import java.io.File
 import java.io.FileDescriptor
 import java.io.FileInputStream
 import java.io.IOException
+import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
@@ -33,6 +34,9 @@ object Dex2OatServer {
   private const val WRAPPER64 = "bin/dex2oat64"
   private const val HOOKER32 = "bin/liboat_hook32.so"
   private const val HOOKER64 = "bin/liboat_hook64.so"
+  private const val CMD_IS_NOINLINE_NEEDED = 6
+  private const val CMD_RECORD_DEX2OAT = 7
+  private const val MAX_SOCKET_STRING_SIZE = 16 * 1024
 
   private val dex2oatArray = arrayOfNulls<String>(6)
   private val fdArray = arrayOfNulls<FileDescriptor>(6)
@@ -53,8 +57,6 @@ object Dex2OatServer {
       d64: String?
   )
 
-  private external fun enableDex2OatPropertyFallbackNative(): Boolean
-
   private var dex2OatPropertyFallbackEnabled = false
 
   private fun enableDex2OatPropertyFallback(reason: String) {
@@ -63,14 +65,8 @@ object Dex2OatServer {
       return
     }
 
-    val ok = enableDex2OatPropertyFallbackNative()
-    dex2OatPropertyFallbackEnabled = ok
-
-    if (ok) {
-      Log.w(TAG, "Enabled dex2oat property fallback: $reason")
-    } else {
-      Log.e(TAG, "Failed to enable dex2oat property fallback: $reason")
-    }
+    dex2OatPropertyFallbackEnabled = false
+    Log.e(TAG, "Dex2Oat wrapper unavailable and global property fallback is disabled: $reason")
   }
 
   private external fun setSockCreateContext(context: String?): Boolean
@@ -379,9 +375,23 @@ object Dex2OatServer {
                   val input = client.inputStream
                   val output = client.outputStream
                   val id = input.read()
-                  if (id in fdArray.indices && fdArray[id] != null) {
-                    client.setFileDescriptorsForSend(arrayOf(fdArray[id]!!))
-                    output.write(1)
+                  when {
+                    id in fdArray.indices && fdArray[id] != null -> {
+                      client.setFileDescriptorsForSend(arrayOf(fdArray[id]!!))
+                      output.write(1)
+                    }
+                    id == CMD_IS_NOINLINE_NEEDED -> {
+                      val apkPath = readSocketString(input)
+                      val noInline = Dex2OatService.isNoInlineNeeded(apkPath)
+                      output.write(if (noInline) 1 else 0)
+                    }
+                    id == CMD_RECORD_DEX2OAT -> {
+                      val apkPath = readSocketString(input)
+                      val odexPath = readSocketString(input)
+                      val realPath = readSocketString(input)
+                      Dex2OatService.recordDex2oat(apkPath, odexPath, realPath)
+                      output.write(1)
+                    }
                   }
                 }
               } catch (e: IOException) {
@@ -425,5 +435,30 @@ object Dex2OatServer {
           }
           .onFailure { Log.w(TAG, "Failed to clean stale dex2oat socket file: $sockPath", it) }
     }
+  }
+
+  private fun readSocketString(input: InputStream): String? {
+    val lengthBytes = ByteArray(4)
+    var offset = 0
+    while (offset < lengthBytes.size) {
+      val read = input.read(lengthBytes, offset, lengthBytes.size - offset)
+      if (read < 0) return null
+      offset += read
+    }
+    val length =
+        ((lengthBytes[0].toInt() and 0xff) shl 24) or
+            ((lengthBytes[1].toInt() and 0xff) shl 16) or
+            ((lengthBytes[2].toInt() and 0xff) shl 8) or
+            (lengthBytes[3].toInt() and 0xff)
+    if (length < 0 || length > MAX_SOCKET_STRING_SIZE) return null
+    if (length == 0) return ""
+    val data = ByteArray(length)
+    offset = 0
+    while (offset < data.size) {
+      val read = input.read(data, offset, data.size - offset)
+      if (read < 0) return null
+      offset += read
+    }
+    return data.toString(Charsets.UTF_8)
   }
 }

@@ -8,7 +8,7 @@ import java.io.File
 import org.matrix.vector.daemon.utils.FakeContext
 
 private const val TAG = "VectorDatabase"
-private const val DB_VERSION = 4
+private const val DB_VERSION = 5
 
 class Database(context: Context? = FakeContext()) :
     SQLiteOpenHelper(context, FileSystem.dbPath.absolutePath, null, DB_VERSION) {
@@ -62,6 +62,8 @@ class Database(context: Context? = FakeContext()) :
             .trimIndent())
 
     db.execSQL("CREATE INDEX IF NOT EXISTS configs_idx ON configs (module_pkg_name, user_id);")
+
+    createDex2OatTables(db)
 
     // Insert self
     db.execSQL(
@@ -174,5 +176,32 @@ class Database(context: Context? = FakeContext()) :
             "ALTER TABLE modules ADD COLUMN auto_include BOOLEAN DEFAULT 0 CHECK (auto_include IN (0, 1));")
       }
     }
+    if (oldVersion < 5) {
+      createDex2OatTables(db)
+    }
+  }
+
+  private fun createDex2OatTables(db: SQLiteDatabase) {
+    db.execSQL(
+        """
+        CREATE TABLE IF NOT EXISTS managed_odex (
+            pkg TEXT NOT NULL,
+            apk_path TEXT NOT NULL,
+            odex_path TEXT NOT NULL,
+            odex_mtime INTEGER,
+            PRIMARY KEY(pkg, apk_path)
+        );
+        """
+            .trimIndent())
+
+    db.execSQL(
+        """
+        CREATE TABLE IF NOT EXISTS pkg_dependency (
+            referer TEXT NOT NULL,
+            referee TEXT NOT NULL,
+            PRIMARY KEY(referer, referee)
+        );
+        """
+            .trimIndent())
   }
 }

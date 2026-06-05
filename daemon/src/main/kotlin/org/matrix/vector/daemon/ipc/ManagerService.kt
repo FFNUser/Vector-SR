@@ -31,6 +31,7 @@ import org.matrix.vector.daemon.data.ConfigCache
 import org.matrix.vector.daemon.data.FileSystem
 import org.matrix.vector.daemon.data.ModuleDatabase
 import org.matrix.vector.daemon.data.PreferenceStore
+import org.matrix.vector.daemon.env.Dex2OatService
 import org.matrix.vector.daemon.env.Dex2OatServer
 import org.matrix.vector.daemon.env.LogcatMonitor
 import org.matrix.vector.daemon.system.*
@@ -443,4 +444,18 @@ object ManagerService : ILSPManagerService.Stub() {
       ModuleDatabase.setAutoInclude(packageName, enabled)
 
   override fun getAutoInclude(packageName: String) = ConfigCache.getAutoInclude(packageName)
+
+  override fun getInvalidateInlineHookApps(): List<String> =
+      PreferenceStore.getInvalidateInlineHookApps().toList().sorted()
+
+  override fun setInvalidateInlineHookApps(packages: MutableList<String>) {
+    val oldSet = PreferenceStore.getInvalidateInlineHookApps()
+    val newSet = packages.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+
+    PreferenceStore.setInvalidateInlineHookApps(newSet)
+
+    val added = newSet - oldSet
+    val removed = oldSet - newSet
+    Dex2OatService.onInvalidateInlineHookAppsChanged(added, removed)
+  }
 }

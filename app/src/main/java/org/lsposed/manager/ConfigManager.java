@@ -344,4 +344,24 @@ public class ConfigManager {
             return false;
         }
     }
+
+    public static List<String> getInvalidateInlineHookApps() {
+        try {
+            var packages = LSPManagerServiceHolder.getService().getInvalidateInlineHookApps();
+            return packages == null ? new ArrayList<>() : new ArrayList<>(packages);
+        } catch (RemoteException e) {
+            Log.e(App.TAG, Log.getStackTraceString(e));
+            return new ArrayList<>();
+        }
+    }
+
+    public static boolean setInvalidateInlineHookApps(List<String> packages) {
+        try {
+            LSPManagerServiceHolder.getService().setInvalidateInlineHookApps(packages);
+            return true;
+        } catch (RemoteException e) {
+            Log.e(App.TAG, Log.getStackTraceString(e));
+            return false;
+        }
+    }
 }

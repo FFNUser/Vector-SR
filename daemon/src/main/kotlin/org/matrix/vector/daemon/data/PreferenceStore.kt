@@ -100,4 +100,22 @@ object PreferenceStore {
   fun isScopeRequestBlocked(pkg: String): Boolean =
       (getModulePrefs("lspd", 0, "config")["scope_request_blocked"] as? Set<*>)?.contains(pkg) ==
           true
+
+  fun getInvalidateInlineHookApps(): Set<String> =
+      (getModulePrefs("lspd", 0, "config")["invalidate_inline_hook_apps"] as? Set<*>)
+          ?.mapNotNull { it as? String }
+          ?.map { it.trim() }
+          ?.filter { it.isNotEmpty() }
+          ?.toSet()
+          ?: emptySet()
+
+  fun setInvalidateInlineHookApps(packages: Collection<String>) =
+      updateModulePref(
+          "lspd",
+          0,
+          "config",
+          "invalidate_inline_hook_apps",
+          java.util.HashSet(packages.map { it.trim() }.filter { it.isNotEmpty() }))
+
+  fun shouldInvalidateInlineHooks(pkg: String): Boolean = getInvalidateInlineHookApps().contains(pkg)
 }

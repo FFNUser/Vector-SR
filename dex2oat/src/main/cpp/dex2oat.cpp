@@ -1,4 +1,5 @@
 #include <linux/memfd.h>
+#include <sys/wait.h>
 #include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -9,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 #include <string>
 #include <vector>
 
@@ -26,6 +28,8 @@ extern "C" char **environ;
 namespace {
 
 constexpr char kSockName[] = "5291374ceda0aef7c5d86cd2a4f6a3ac";
+constexpr int kCmdIsNoInlineNeeded = 6;
+constexpr int kCmdRecordDex2Oat = 7;
 
 /**
  * Calculates a vector ID based on architecture and debug status.
@@ -106,45 +110,139 @@ void write_int(int fd, int val) {
     (void)write(fd, &val, sizeof(val));
 }
 
+bool read_fully(int fd, void *data, size_t size) {
+    auto *ptr = static_cast<char *>(data);
+    size_t done = 0;
+    while (done < size) {
+        ssize_t r = read(fd, ptr + done, size - done);
+        if (r <= 0) return false;
+        done += static_cast<size_t>(r);
+    }
+    return true;
+}
+
+bool write_fully(int fd, const void *data, size_t size) {
+    const auto *ptr = static_cast<const char *>(data);
+    size_t done = 0;
+    while (done < size) {
+        ssize_t r = write(fd, ptr + done, size - done);
+        if (r <= 0) return false;
+        done += static_cast<size_t>(r);
+    }
+    return true;
+}
+
+int connect_server() {
+    struct sockaddr_un sock = {};
+    sock.sun_family = AF_UNIX;
+    std::strncpy(sock.sun_path + 1, kSockName, sizeof(sock.sun_path) - 2);
+    socklen_t len = sizeof(sock.sun_family) + strlen(kSockName) + 1;
+
+    int sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock_fd < 0) {
+        PLOGE("socket");
+        return -1;
+    }
+    if (connect(sock_fd, reinterpret_cast<struct sockaddr *>(&sock), len)) {
+        PLOGE("failed to connect to %s", sock.sun_path + 1);
+        close(sock_fd);
+        return -1;
+    }
+    return sock_fd;
+}
+
+bool write_socket_string(int fd, const std::string &value) {
+    uint32_t length = static_cast<uint32_t>(value.size());
+    unsigned char header[4] = {
+        static_cast<unsigned char>((length >> 24) & 0xff),
+        static_cast<unsigned char>((length >> 16) & 0xff),
+        static_cast<unsigned char>((length >> 8) & 0xff),
+        static_cast<unsigned char>(length & 0xff),
+    };
+    return write_fully(fd, header, sizeof(header)) &&
+           (value.empty() || write_fully(fd, value.data(), value.size()));
+}
+
+int request_fd(int id) {
+    int sock_fd = connect_server();
+    if (sock_fd < 0) return -1;
+
+    write_int(sock_fd, id);
+    int fd = recv_fd(sock_fd);
+    read_int(sock_fd);
+    close(sock_fd);
+    return fd;
+}
+
+std::string arg_value(const char *arg, const char *prefix) {
+    if (arg == nullptr) return {};
+    size_t prefix_len = std::strlen(prefix);
+    if (std::strncmp(arg, prefix, prefix_len) != 0) return {};
+    return std::string(arg + prefix_len);
+}
+
+std::string read_link_path(const std::string &path) {
+    std::vector<char> buffer(4096);
+    ssize_t size = readlink(path.c_str(), buffer.data(), buffer.size() - 1);
+    if (size < 0) return {};
+    buffer[static_cast<size_t>(size)] = '\0';
+    return std::string(buffer.data());
+}
+
+std::string fd_arg_path(const char *arg, const char *prefix) {
+    auto fd_value = arg_value(arg, prefix);
+    if (fd_value.empty()) return {};
+    return read_link_path("/proc/self/fd/" + fd_value);
+}
+
+bool has_prefix(const char *arg, const char *prefix) {
+    return arg != nullptr && std::strncmp(arg, prefix, std::strlen(prefix)) == 0;
+}
+
+bool query_noinline(const std::string &apk_path) {
+    int sock_fd = connect_server();
+    if (sock_fd < 0) return true;
+
+    unsigned char cmd = kCmdIsNoInlineNeeded;
+    bool ok = write_fully(sock_fd, &cmd, sizeof(cmd)) && write_socket_string(sock_fd, apk_path);
+    unsigned char result = 1;
+    if (ok) ok = read_fully(sock_fd, &result, sizeof(result));
+    close(sock_fd);
+
+    if (!ok) {
+        LOGW("noinline query failed, defaulting to true for apk=%s", apk_path.c_str());
+        return true;
+    }
+    return result != 0;
+}
+
+void record_dex2oat(const std::string &apk_path,
+                    const std::string &odex_path,
+                    const std::string &real_path) {
+    int sock_fd = connect_server();
+    if (sock_fd < 0) return;
+
+    unsigned char cmd = kCmdRecordDex2Oat;
+    bool ok = write_fully(sock_fd, &cmd, sizeof(cmd)) &&
+              write_socket_string(sock_fd, apk_path) &&
+              write_socket_string(sock_fd, odex_path) &&
+              write_socket_string(sock_fd, real_path);
+    unsigned char ack = 0;
+    if (ok) (void)read_fully(sock_fd, &ack, sizeof(ack));
+    close(sock_fd);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
     LOGD("dex2oat wrapper ppid=%d", getppid());
 
-    // Prepare Unix domain socket address (Abstract Namespace)
-    struct sockaddr_un sock = {};
-    sock.sun_family = AF_UNIX;
-    // sock.sun_path[0] is already \0, so we copy name into sun_path + 1
-    std::strncpy(sock.sun_path + 1, kSockName, sizeof(sock.sun_path) - 2);
-
-    // Abstract socket length: family + leading \0 + string length
-    socklen_t len = sizeof(sock.sun_family) + strlen(kSockName) + 1;
-
     // 1. Get original dex2oat binary FD
-    int sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (connect(sock_fd, reinterpret_cast<struct sockaddr *>(&sock), len)) {
-        PLOGE("failed to connect to %s", sock.sun_path + 1);
-        return 1;
-    }
-
     bool is_debug = (argv[0] != nullptr && std::strstr(argv[0], "dex2oatd") != nullptr);
-    write_int(sock_fd, get_id_vec(LP_SELECT(false, true), is_debug));
-
-    int stock_fd = recv_fd(sock_fd);
-    read_int(sock_fd);  // Sync
-    close(sock_fd);
+    int stock_fd = request_fd(get_id_vec(LP_SELECT(false, true), is_debug));
 
     // 2. Get liboat_hook.so FD
-    sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (connect(sock_fd, reinterpret_cast<struct sockaddr *>(&sock), len)) {
-        PLOGE("failed to connect to %s", sock.sun_path + 1);
-        return 1;
-    }
-
-    write_int(sock_fd, LP_SELECT(4, 5));
-    int hooker_fd = recv_fd(sock_fd);
-    read_int(sock_fd);  // Sync
-    close(sock_fd);
+    int hooker_fd = request_fd(LP_SELECT(4, 5));
 
     if (hooker_fd == -1) {
         LOGE("failed to read liboat_hook.so");
@@ -171,10 +269,29 @@ int main(int argc, char **argv) {
         }
     }
 
-    LOGD("sock: %s stock_fd: %d", sock.sun_path + 1, stock_fd);
+    if (stock_fd == -1) {
+        LOGE("failed to read original dex2oat");
+        return 1;
+    }
+
+    std::string apk_path;
+    std::string odex_path;
+    for (int i = 1; i < argc; ++i) {
+        if (apk_path.empty()) apk_path = arg_value(argv[i], "--dex-file=");
+        if (apk_path.empty()) apk_path = arg_value(argv[i], "--zip-location=");
+        if (apk_path.empty()) apk_path = fd_arg_path(argv[i], "--zip-fd=");
+        if (odex_path.empty()) odex_path = arg_value(argv[i], "--oat-file=");
+        if (odex_path.empty()) odex_path = fd_arg_path(argv[i], "--oat-fd=");
+    }
+
+    bool noinline = query_noinline(apk_path);
+    LOGI("noinline=%s apk=%s oat=%s",
+         noinline ? "true" : "false",
+         apk_path.c_str(),
+         odex_path.c_str());
 
     // Prepare arguments for execve
-    // Logic: [linker] [/proc/self/fd/stock_fd] [original_args...] [--inline-max-code-units=0]
+    // Logic: [linker] [/proc/self/fd/stock_fd] [original_args...] [optional no-inline flag]
     std::vector<const char *> exec_argv;
 
     const char *linker_path =
@@ -188,22 +305,29 @@ int main(int argc, char **argv) {
 
     // Append original arguments starting from argv[1]
     for (int i = 1; i < argc; ++i) {
+        if (has_prefix(argv[i], "--inline-max-code-units=")) {
+            continue;
+        }
         exec_argv.push_back(argv[i]);
     }
 
-    // Append hooking flags to disable inline, which is our purpose of this wrapper, since we cannot
-    // hook inlined target methods.
-    exec_argv.push_back("--inline-max-code-units=0");
+    if (noinline) {
+        LOGI("inject --inline-max-code-units=0");
+        exec_argv.push_back("--inline-max-code-units=0");
+    }
     exec_argv.push_back(nullptr);
 
     // Setup Environment variables
     // Clear LD_LIBRARY_PATH to let the linker use internal config
     unsetenv("LD_LIBRARY_PATH");
 
-    // Set LD_PRELOAD to point to the hooker library FD
-    std::string preload_val = "LD_PRELOAD=/proc/self/fd/" + std::to_string(hooker_fd);
-    LOGD("Inject oat hook via %s", preload_val.data());
-    setenv("LD_PRELOAD", ("/proc/self/fd/" + std::to_string(hooker_fd)).c_str(), 1);
+    if (noinline && hooker_fd != -1) {
+        std::string preload_path = "/proc/self/fd/" + std::to_string(hooker_fd);
+        LOGD("LD_PRELOAD=%s", preload_path.c_str());
+        setenv("LD_PRELOAD", preload_path.c_str(), 1);
+    } else {
+        unsetenv("LD_PRELOAD");
+    }
 
     // Pass original argv[0] as DEX2OAT_CMD
     if (argv[0]) {
@@ -213,10 +337,32 @@ int main(int argc, char **argv) {
 
     LOGI("Executing via linker: %s executing %s", linker_path, stock_fd_path);
 
-    // Perform the execution
-    execve(linker_path, const_cast<char *const *>(exec_argv.data()), environ);
+    pid_t pid = fork();
+    if (pid == 0) {
+        execve(linker_path, const_cast<char *const *>(exec_argv.data()), environ);
+        PLOGE("execve failed");
+        _exit(127);
+    }
+    if (pid < 0) {
+        PLOGE("fork failed");
+        return 2;
+    }
 
-    // If we reach here, execve failed
-    PLOGE("execve failed");
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno == EINTR) continue;
+        PLOGE("waitpid failed");
+        return 2;
+    }
+
+    record_dex2oat(apk_path, odex_path, stock_fd_path);
+
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
     return 2;
+
 }
