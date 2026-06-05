@@ -4,6 +4,9 @@ import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
 import android.util.Log
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import org.matrix.vector.daemon.VectorDaemon
 import org.matrix.vector.daemon.data.ConfigCache
 import org.matrix.vector.daemon.data.PreferenceStore
 import org.matrix.vector.daemon.system.MATCH_ALL_FLAGS
@@ -79,8 +82,11 @@ object Dex2OatService {
   }
 
   fun onInvalidateInlineHookAppsChanged(added: Set<String>, removed: Set<String>) {
-    added.forEach { invalidateCompiledArtifacts(it) }
-    removed.forEach { resetCompiledArtifacts(it) }
+    if (added.isEmpty() && removed.isEmpty()) return
+    VectorDaemon.scope.launch(Dispatchers.IO) {
+      added.forEach { invalidateCompiledArtifacts(it) }
+      removed.forEach { resetCompiledArtifacts(it) }
+    }
   }
 
   private fun apkPathToPackage(apkPath: String): String? {
@@ -114,13 +120,13 @@ object Dex2OatService {
 
   private fun invalidateCompiledArtifacts(pkg: String) {
     Log.i(DEX2OAT_SERVICE_TAG, "invalidate compiled artifacts for $pkg")
-    runCommand("cmd", "package", "compile", "--reset", pkg)
-    runCommand("cmd", "package", "compile", "-m", "speed", "-f", pkg)
+    runCommand("/system/bin/cmd", "package", "compile", "--reset", pkg)
+    runCommand("/system/bin/cmd", "package", "compile", "-m", "speed", "-f", pkg)
   }
 
   private fun resetCompiledArtifacts(pkg: String) {
     Log.i(DEX2OAT_SERVICE_TAG, "reset compiled artifacts for removed noinline app $pkg")
-    runCommand("cmd", "package", "compile", "--reset", pkg)
+    runCommand("/system/bin/cmd", "package", "compile", "--reset", pkg)
   }
 
   private fun runCommand(vararg command: String): Int? {
