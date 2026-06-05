@@ -29,6 +29,7 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.navigation.NavController;
@@ -44,6 +45,7 @@ import org.lsposed.manager.ConfigManager;
 import org.lsposed.manager.R;
 import org.lsposed.manager.databinding.ActivityMainBinding;
 import org.lsposed.manager.repo.RepoLoader;
+import org.lsposed.manager.ui.fragment.NoInlineAppsFragment;
 import org.lsposed.manager.ui.activity.base.BaseActivity;
 import org.lsposed.manager.util.ModuleUtil;
 import org.lsposed.manager.util.ShortcutUtil;
@@ -57,6 +59,7 @@ import rikka.core.util.ResourceUtils;
 public class MainActivity extends BaseActivity implements RepoLoader.RepoListener, ModuleUtil.ModuleListener {
     private static final String KEY_PREFIX = MainActivity.class.getName() + '.';
     private static final String EXTRA_SAVED_INSTANCE_STATE = KEY_PREFIX + "SAVED_INSTANCE_STATE";
+    private static final String TAG_NO_INLINE_APPS = "no_inline_apps";
 
     private static final RepoLoader repoLoader = RepoLoader.getInstance();
     private static final ModuleUtil moduleUtil = ModuleUtil.getInstance();
@@ -98,8 +101,45 @@ public class MainActivity extends BaseActivity implements RepoLoader.RepoListene
         NavController navController = navHostFragment.getNavController();
         var nav = (NavigationBarView) binding.nav;
         NavigationUI.setupWithNavController(nav, navController);
+        syncOverlayFragmentContainer();
 
         handleIntent(getIntent());
+    }
+
+    public void showNoInlineApps() {
+        var fragmentManager = getSupportFragmentManager();
+        if (fragmentManager.findFragmentByTag(TAG_NO_INLINE_APPS) != null) {
+            return;
+        }
+        binding.overlayFragmentContainer.setVisibility(View.VISIBLE);
+        binding.nav.setVisibility(View.GONE);
+        fragmentManager
+                .beginTransaction()
+                .setReorderingAllowed(true)
+                .replace(R.id.overlay_fragment_container, new NoInlineAppsFragment(), TAG_NO_INLINE_APPS)
+                .runOnCommit(this::syncOverlayFragmentContainer)
+                .commit();
+    }
+
+    public void hideNoInlineApps() {
+        var fragmentManager = getSupportFragmentManager();
+        var fragment = fragmentManager.findFragmentByTag(TAG_NO_INLINE_APPS);
+        if (fragment == null) {
+            syncOverlayFragmentContainer();
+            return;
+        }
+        fragmentManager
+                .beginTransaction()
+                .setReorderingAllowed(true)
+                .remove(fragment)
+                .runOnCommit(this::syncOverlayFragmentContainer)
+                .commit();
+    }
+
+    private void syncOverlayFragmentContainer() {
+        boolean hasOverlay = getSupportFragmentManager().findFragmentByTag(TAG_NO_INLINE_APPS) != null;
+        binding.overlayFragmentContainer.setVisibility(hasOverlay ? View.VISIBLE : View.GONE);
+        binding.nav.setVisibility(hasOverlay ? View.GONE : View.VISIBLE);
     }
 
     @Override

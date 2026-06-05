@@ -204,6 +204,16 @@
     <string name="settings_unsupported_pin_shortcut_summary">当前默认桌面不支持固定快捷方式</string>
     <string name="settings_enable_status_notification">状态通知</string>
     <string name="settings_enable_status_notification_summary">显示一个通知以打开寄生管理器</string>
+    <string name="settings_group_compatibility">兼容性</string>
+    <string name="no_inline_apps">还原内联 Hook</string>
+    <string name="no_inline_apps_summary">对选中的应用禁用方法内联编译，以提升 Hook 兼容性。</string>
+    <string name="no_inline_apps_description">对选中的应用禁用方法内联编译，以提升 Hook 兼容性。</string>
+    <string name="no_inline_add_app">添加应用</string>
+    <string name="no_inline_remove_app">移除</string>
+    <string name="no_inline_no_apps">尚未选择应用</string>
+    <string name="no_inline_pick_app">添加应用</string>
+    <string name="no_inline_saved">No-inline 应用列表已保存。请重新编译选中应用或清除其 profile 数据以生效。</string>
+    <string name="no_inline_save_failed">无法保存 No-inline 应用列表。</string>
     <string name="settings_update_channel">模块更新通道</string>
     <string name="settings_ignored_module_updates">已忽略的模块更新</string>
     <string name="settings_ignored_module_updates_summary">管理已隐藏更新提示的模块</string>

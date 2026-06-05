@@ -206,6 +206,16 @@
     <string name="settings_unsupported_pin_shortcut_summary">The current default launcher does not support pin shortcuts</string>
     <string name="settings_enable_status_notification">Status Notification</string>
     <string name="settings_enable_status_notification_summary">Show a notification that can open parasitic manager</string>
+    <string name="settings_group_compatibility">Compatibility</string>
+    <string name="no_inline_apps">Invalidate inline hooks</string>
+    <string name="no_inline_apps_summary">Compile selected apps with no method inlining to improve hook compatibility.</string>
+    <string name="no_inline_apps_description">Compile selected apps with no method inlining to improve hook compatibility.</string>
+    <string name="no_inline_add_app">Add app</string>
+    <string name="no_inline_remove_app">Remove</string>
+    <string name="no_inline_no_apps">No apps selected</string>
+    <string name="no_inline_pick_app">Add app</string>
+    <string name="no_inline_saved">No-inline app list saved. Recompile the selected app or clear its profile data to take effect.</string>
+    <string name="no_inline_save_failed">Failed to save no-inline app list.</string>
     <string name="settings_update_channel">Update channel</string>
     <string name="settings_ignored_module_updates">Ignored module updates</string>
     <string name="settings_ignored_module_updates_summary">Manage modules whose update notifications are hidden</string>

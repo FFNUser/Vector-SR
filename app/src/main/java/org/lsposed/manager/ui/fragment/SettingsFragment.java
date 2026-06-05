@@ -362,6 +362,15 @@ public class SettingsFragment extends BaseFragment {
                     return true;
                 });
             }
+            Preference noInlineApps = findPreference("no_inline_apps");
+            if (noInlineApps != null) {
+                noInlineApps.setEnabled(installed);
+                noInlineApps.setOnPreferenceClickListener(preference -> {
+                    MainActivity activity = (MainActivity) requireActivity();
+                    activity.showNoInlineApps();
+                    return true;
+                });
+            }
         }
 
         private void showIgnoredModuleUpdatesDialog() {

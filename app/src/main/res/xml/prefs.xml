@@ -107,6 +107,14 @@
             android:title="@string/settings_enable_status_notification" />
     </PreferenceCategory>
 
+    <PreferenceCategory android:title="@string/settings_group_compatibility">
+        <Preference
+            android:icon="@drawable/ic_outline_shield_24"
+            android:key="no_inline_apps"
+            android:summary="@string/no_inline_apps_summary"
+            android:title="@string/no_inline_apps" />
+    </PreferenceCategory>
+
     <PreferenceCategory android:title="@string/settings_group_repo">
         <rikka.preference.SimpleMenuPreference
             android:defaultValue="CHANNEL_STABLE"

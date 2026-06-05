@@ -195,6 +195,16 @@
     <string name="settings_unsupported_pin_shortcut_summary">目前的預設啟動器不支援釘選捷徑</string>
     <string name="settings_enable_status_notification">狀態通知</string>
     <string name="settings_enable_status_notification_summary">顯示通知以便開啟寄生管理員</string>
+    <string name="settings_group_compatibility">相容性</string>
+    <string name="no_inline_apps">還原內聯 Hook</string>
+    <string name="no_inline_apps_summary">為選取的應用程式停用方法內聯編譯，以改善 Hook 相容性。</string>
+    <string name="no_inline_apps_description">為選取的應用程式停用方法內聯編譯，以改善 Hook 相容性。</string>
+    <string name="no_inline_add_app">加入應用程式</string>
+    <string name="no_inline_remove_app">移除</string>
+    <string name="no_inline_no_apps">尚未選擇應用程式</string>
+    <string name="no_inline_pick_app">加入應用程式</string>
+    <string name="no_inline_saved">No-inline 應用程式清單已儲存。請重新編譯選取的應用程式或清除其 profile 資料以套用。</string>
+    <string name="no_inline_save_failed">無法儲存 No-inline 應用程式清單。</string>
     <string name="settings_update_channel">更新頻道</string>
     <string name="update_channel_stable">穩定版</string>
     <string name="update_channel_bate">測試版</string>
