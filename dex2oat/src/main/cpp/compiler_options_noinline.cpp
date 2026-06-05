@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <dlfcn.h>
+#include <unistd.h>
 
 #include "logging.h"
 
@@ -12,13 +13,28 @@ using Constructor = void (*)(void*);
 constexpr const char* kCompilerOptionsC1 = "_ZN3art15CompilerOptionsC1Ev";
 constexpr const char* kCompilerOptionsC2 = "_ZN3art15CompilerOptionsC2Ev";
 
-Constructor resolve_original(const char* symbol) {
+Constructor resolve_symbol(const char* symbol) {
+    dlerror();
     void* original = dlsym(RTLD_NEXT, symbol);
     if (original == nullptr) {
-        LOGE("CompilerOptions: failed to resolve %s: %s", symbol, dlerror());
+        const char* error = dlerror();
+        LOGW("CompilerOptions: failed to resolve %s: %s", symbol, error != nullptr ? error : "unknown");
         return nullptr;
     }
     return reinterpret_cast<Constructor>(original);
+}
+
+Constructor resolve_original(const char* symbol) {
+    if (auto original = resolve_symbol(symbol)) return original;
+
+    const char* fallback = std::strcmp(symbol, kCompilerOptionsC1) == 0 ? kCompilerOptionsC2 : kCompilerOptionsC1;
+    if (auto original = resolve_symbol(fallback)) {
+        LOGW("CompilerOptions: using fallback constructor %s for %s", fallback, symbol);
+        return original;
+    }
+
+    LOGE("CompilerOptions: no original constructor available for %s", symbol);
+    return nullptr;
 }
 
 void patch_options(void* self) {
@@ -46,7 +62,9 @@ void call_original_and_patch(void* self, const char* symbol) {
     if (*slot == nullptr) {
         *slot = resolve_original(symbol);
     }
-    if (*slot == nullptr) return;
+    if (*slot == nullptr) {
+        _exit(127);
+    }
 
     LOGD("CompilerOptions: constructor %s", symbol);
     (*slot)(self);
