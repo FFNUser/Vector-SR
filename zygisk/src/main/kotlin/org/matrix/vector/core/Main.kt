@@ -55,6 +55,6 @@ object Main {
 
         // Standard Xposed module loading for third-party apps
         Utils.logV("Loading Vector/Xposed for $niceName (UID: ${Process.myUid()})")
-        Startup.bootstrapXposed(isSystem && isLateInject)
+        Startup.bootstrapXposed(isSystem)
     }
 }
