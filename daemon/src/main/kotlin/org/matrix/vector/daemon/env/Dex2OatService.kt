@@ -18,42 +18,43 @@ private const val DEX2OAT_SERVICE_TAG = "VectorDex2Oat"
 object Dex2OatService {
 
   fun isNoInlineNeeded(apkPath: String?): Boolean {
-    Log.d(DEX2OAT_SERVICE_TAG, "checking noinline for $apkPath")
+    Log.d(DEX2OAT_SERVICE_TAG, "noinline query raw apkPath=$apkPath")
 
     if (apkPath.isNullOrBlank()) {
-      Log.w(DEX2OAT_SERVICE_TAG, "noinline not applied: empty apkPath")
+      Log.w(
+          DEX2OAT_SERVICE_TAG,
+          "noinline decision raw apkPath=$apkPath normalized apkPath=null mapped package=null selectedDirect=false selectedReferer=false final=false reason=empty_apk_path")
       return false
     }
 
     val normalizedApkPath = normalizePath(apkPath)
+    Log.d(DEX2OAT_SERVICE_TAG, "noinline query normalized apkPath=$normalizedApkPath")
     val rootPath = File("/proc/1/root$normalizedApkPath")
     if (!rootPath.exists()) {
-      Log.w(DEX2OAT_SERVICE_TAG, "noinline not applied: apk file does not exist: $rootPath")
+      Log.w(
+          DEX2OAT_SERVICE_TAG,
+          "noinline decision raw apkPath=$apkPath normalized apkPath=$normalizedApkPath mapped package=null selectedDirect=false selectedReferer=false final=false reason=missing_apk rootPath=$rootPath")
       return false
     }
 
     val pkg = apkPathToPackage(normalizedApkPath)
     if (pkg == null) {
-      Log.w(DEX2OAT_SERVICE_TAG, "noinline not applied: no package found for $normalizedApkPath")
+      Log.w(
+          DEX2OAT_SERVICE_TAG,
+          "noinline decision raw apkPath=$apkPath normalized apkPath=$normalizedApkPath mapped package=null selectedDirect=false selectedReferer=false final=false reason=no_package_mapping")
       return false
     }
+    Log.d(DEX2OAT_SERVICE_TAG, "noinline query mapped package=$pkg")
 
     val selected = PreferenceStore.getInvalidateInlineHookApps()
-    if (selected.contains(pkg)) {
-      Log.d(DEX2OAT_SERVICE_TAG, "noinline needed: selected package $pkg")
-      return true
-    }
-
+    val selectedDirectly = selected.contains(pkg)
     val selectedReferer = queryReferers(pkg).firstOrNull { selected.contains(it) }
-    if (selectedReferer != null) {
-      Log.d(
-          DEX2OAT_SERVICE_TAG,
-          "noinline needed: pkg $pkg is referenced by selected $selectedReferer")
-      return true
-    }
-
-    Log.d(DEX2OAT_SERVICE_TAG, "noinline not needed: $normalizedApkPath pkg=$pkg")
-    return false
+    val selectedViaReferer = selectedReferer != null
+    val decision = selectedDirectly || selectedViaReferer
+    Log.i(
+        DEX2OAT_SERVICE_TAG,
+        "noinline decision raw apkPath=$apkPath normalized apkPath=$normalizedApkPath mapped package=$pkg selectedDirect=$selectedDirectly selectedReferer=$selectedViaReferer selectedRefererPackage=$selectedReferer final=$decision")
+    return decision
   }
 
   fun recordDex2oat(apkPath: String?, odexPath: String?, realPath: String?) {
@@ -78,7 +79,7 @@ object Dex2OatService {
 
     Log.d(
         DEX2OAT_SERVICE_TAG,
-        "record dex2oat pkg=$pkg apkPath=$normalizedApkPath odexPath=$normalizedOdexPath realPath=$realPath mtime=$odexMtime")
+        "managed_odex recorded pkg=$pkg apkPath=$normalizedApkPath odexPath=$normalizedOdexPath realPath=$realPath mtime=$odexMtime")
   }
 
   fun onInvalidateInlineHookAppsChanged(added: Set<String>, removed: Set<String>) {
@@ -100,6 +101,8 @@ object Dex2OatService {
   }
 
   private fun queryReferers(pkg: String): Set<String> {
+    // TODO: pkg_dependency is reserved for split/shared-library dependency propagation.
+    // Do not rely on this path until population logic is implemented and verified.
     val result = mutableSetOf<String>()
     ConfigCache.dbHelper.readableDatabase
         .query(
@@ -120,8 +123,16 @@ object Dex2OatService {
 
   private fun invalidateCompiledArtifacts(pkg: String) {
     Log.i(DEX2OAT_SERVICE_TAG, "invalidate compiled artifacts for $pkg")
-    runCommand("/system/bin/cmd", "package", "compile", "--reset", pkg)
-    runCommand("/system/bin/cmd", "package", "compile", "-m", "speed", "-f", pkg)
+    Log.i(DEX2OAT_SERVICE_TAG, "compile reset start for noinline app $pkg")
+    val resetExit = runCommand("/system/bin/cmd", "package", "compile", "--reset", pkg)
+    Log.i(DEX2OAT_SERVICE_TAG, "compile speed -f start for noinline app $pkg")
+    val speedExit = runCommand("/system/bin/cmd", "package", "compile", "-m", "speed", "-f", pkg)
+    if (resetExit == 0 && speedExit == 0) {
+      Log.i(
+          DEX2OAT_SERVICE_TAG,
+          "noinline recompile finished for $pkg; target app must be restarted for new oat artifacts to take effect")
+      // TODO: expose this restart requirement in Manager UI instead of force-stopping automatically.
+    }
   }
 
   private fun resetCompiledArtifacts(pkg: String) {

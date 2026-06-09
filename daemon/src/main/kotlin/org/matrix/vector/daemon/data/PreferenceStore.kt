@@ -2,6 +2,7 @@ package org.matrix.vector.daemon.data
 
 import android.content.ContentValues
 import android.database.sqlite.SQLiteDatabase
+import android.util.Log
 import org.apache.commons.lang3.SerializationUtilsX
 
 private const val TAG = "VectorPreferenceStore"
@@ -109,13 +110,20 @@ object PreferenceStore {
           ?.toSet()
           ?: emptySet()
 
-  fun setInvalidateInlineHookApps(packages: Collection<String>) =
+  fun setInvalidateInlineHookApps(packages: Collection<String>) {
+    val oldSet = getInvalidateInlineHookApps()
+    val newSet = packages.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    Log.i(
+        TAG,
+        "setInvalidateInlineHookApps old=${oldSet.sorted()} new=${newSet.sorted()} added=${(newSet - oldSet).sorted()} removed=${(oldSet - newSet).sorted()}")
+
       updateModulePref(
           "lspd",
           0,
           "config",
           "invalidate_inline_hook_apps",
-          java.util.HashSet(packages.map { it.trim() }.filter { it.isNotEmpty() }))
+          java.util.HashSet(newSet))
+  }
 
   fun shouldInvalidateInlineHooks(pkg: String): Boolean = getInvalidateInlineHookApps().contains(pkg)
 }
