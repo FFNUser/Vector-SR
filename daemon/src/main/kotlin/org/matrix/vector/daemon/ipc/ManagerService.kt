@@ -16,7 +16,6 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.SELinux
-import android.os.SystemProperties
 import android.util.Log
 import android.view.IWindowManager
 import hidden.HiddenApiBridge
@@ -31,6 +30,7 @@ import org.matrix.vector.daemon.data.ConfigCache
 import org.matrix.vector.daemon.data.FileSystem
 import org.matrix.vector.daemon.data.ModuleDatabase
 import org.matrix.vector.daemon.data.PreferenceStore
+import org.matrix.vector.daemon.env.DEX2OAT_OK
 import org.matrix.vector.daemon.env.Dex2OatService
 import org.matrix.vector.daemon.env.Dex2OatServer
 import org.matrix.vector.daemon.env.LogcatMonitor
@@ -393,7 +393,7 @@ object ManagerService : ILSPManagerService.Stub() {
   }
 
   override fun dex2oatFlagsLoaded() =
-      SystemProperties.get("dalvik.vm.dex2oat-flags").contains("--inline-max-code-units=0")
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && Dex2OatServer.compatibility == DEX2OAT_OK
 
   override fun setHiddenIcon(hide: Boolean) {
     val args =
@@ -451,11 +451,15 @@ object ManagerService : ILSPManagerService.Stub() {
   override fun setInvalidateInlineHookApps(packages: MutableList<String>) {
     val oldSet = PreferenceStore.getInvalidateInlineHookApps()
     val newSet = packages.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    val added = newSet - oldSet
+    val removed = oldSet - newSet
+
+    Log.i(
+        TAG,
+        "setInvalidateInlineHookApps old=${oldSet.sorted()} new=${newSet.sorted()} added=${added.sorted()} removed=${removed.sorted()}")
 
     PreferenceStore.setInvalidateInlineHookApps(newSet)
 
-    val added = newSet - oldSet
-    val removed = oldSet - newSet
     Dex2OatService.onInvalidateInlineHookAppsChanged(added, removed)
   }
 }

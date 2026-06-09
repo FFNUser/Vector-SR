@@ -201,7 +201,11 @@ bool has_prefix(const char *arg, const char *prefix) {
 
 bool query_noinline(const std::string &apk_path) {
     int sock_fd = connect_server();
-    if (sock_fd < 0) return true;
+    if (sock_fd < 0) {
+        LOGW("noinline query failed: daemon unavailable, defaulting to false for apk=%s",
+             apk_path.c_str());
+        return false;
+    }
 
     unsigned char cmd = kCmdIsNoInlineNeeded;
     bool ok = write_fully(sock_fd, &cmd, sizeof(cmd)) && write_socket_string(sock_fd, apk_path);
@@ -210,8 +214,8 @@ bool query_noinline(const std::string &apk_path) {
     close(sock_fd);
 
     if (!ok) {
-        LOGW("noinline query failed, defaulting to true for apk=%s", apk_path.c_str());
-        return true;
+        LOGW("noinline query failed, defaulting to false for apk=%s", apk_path.c_str());
+        return false;
     }
     return result != 0;
 }
@@ -285,10 +289,10 @@ int main(int argc, char **argv) {
     }
 
     bool noinline = query_noinline(apk_path);
-    LOGI("noinline=%s apk=%s oat=%s",
-         noinline ? "true" : "false",
+    LOGI("dex2oat wrapper invoked: apk_path=%s odex_path=%s noinline=%s",
          apk_path.c_str(),
-         odex_path.c_str());
+         odex_path.c_str(),
+         noinline ? "true" : "false");
 
     // Prepare arguments for execve
     // Logic: [linker] [/proc/self/fd/stock_fd] [original_args...] [optional no-inline flag]
@@ -303,18 +307,26 @@ int main(int argc, char **argv) {
     exec_argv.push_back(linker_path);
     exec_argv.push_back(stock_fd_path);
 
+    bool removed_inline_max_code_units = false;
+    bool injected_inline_max_code_units = false;
+
     // Append original arguments starting from argv[1]
     for (int i = 1; i < argc; ++i) {
         if (has_prefix(argv[i], "--inline-max-code-units=")) {
+            removed_inline_max_code_units = true;
             continue;
         }
         exec_argv.push_back(argv[i]);
     }
 
     if (noinline) {
-        LOGI("inject --inline-max-code-units=0");
+        LOGI("dex2oat wrapper: injecting --inline-max-code-units=0");
         exec_argv.push_back("--inline-max-code-units=0");
+        injected_inline_max_code_units = true;
     }
+    LOGI("dex2oat wrapper: removed_existing_inline_max_code_units=%s injected_inline_max_code_units=%s",
+         removed_inline_max_code_units ? "true" : "false",
+         injected_inline_max_code_units ? "true" : "false");
     exec_argv.push_back(nullptr);
 
     // Setup Environment variables
@@ -323,9 +335,10 @@ int main(int argc, char **argv) {
 
     if (noinline && hooker_fd != -1) {
         std::string preload_path = "/proc/self/fd/" + std::to_string(hooker_fd);
-        LOGD("LD_PRELOAD=%s", preload_path.c_str());
+        LOGI("dex2oat wrapper: LD_PRELOAD set to %s", preload_path.c_str());
         setenv("LD_PRELOAD", preload_path.c_str(), 1);
     } else {
+        LOGI("dex2oat wrapper: LD_PRELOAD not set");
         unsetenv("LD_PRELOAD");
     }
 
@@ -358,9 +371,12 @@ int main(int argc, char **argv) {
     record_dex2oat(apk_path, odex_path, stock_fd_path);
 
     if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
+        int exit_code = WEXITSTATUS(status);
+        LOGI("dex2oat wrapper: child dex2oat exit code=%d", exit_code);
+        return exit_code;
     }
     if (WIFSIGNALED(status)) {
+        LOGW("dex2oat wrapper: child dex2oat killed by signal=%d", WTERMSIG(status));
         return 128 + WTERMSIG(status);
     }
     return 2;

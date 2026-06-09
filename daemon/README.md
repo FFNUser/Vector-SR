@@ -77,7 +77,7 @@ The daemon manages this interception entirely through its native JNI layer. To e
 
 When the wrapper executes, it connects to the daemon's abstract UNIX domain socket to retrieve the original compiler binary and the hooking library (`liboat_hook.so`) via `SCM_RIGHTS`. To guarantee the wrapper can connect without SELinux denials, the daemon dynamically writes to `/proc/self/task/[tid]/attr/sockcreate` before binding the socket. This instructs the kernel to label the abstract socket with a specific context, such as `u:r:dex2oat:s0` or `u:r:installd:s0`, matching the strict domains under which the compiler operates.
 
-If the wrapper is disabled or incompatible, the daemon unmounts the binaries and utilizes `resetprop` to inject the inline flag directly into the `dalvik.vm.dex2oat-flags` system property as a fallback. The Kotlin daemon continuously monitors SELinux states via a `FileObserver` on `/sys/fs/selinux/enforce` and its policy files. It dynamically remounts the wrappers if the system drops to permissive mode or alters policy, ensuring the interception persists across state changes.
+If the wrapper is disabled or incompatible, the daemon unmounts the binaries and reports wrapper unavailability without mutating `dalvik.vm.dex2oat-flags` at runtime. The Kotlin daemon continuously monitors SELinux states via a `FileObserver` on `/sys/fs/selinux/enforce` and its policy files. It dynamically remounts the wrappers if the system drops to permissive mode or alters policy, ensuring the interception persists across state changes.
 
 ### Native Logcat Monitoring
 Instead of relying on standard logcat shell execution, the daemon runs a native C++ process that interfaces directly with Android's `liblog` buffers (`LOG_ID_MAIN` and `LOG_ID_CRASH`). 
