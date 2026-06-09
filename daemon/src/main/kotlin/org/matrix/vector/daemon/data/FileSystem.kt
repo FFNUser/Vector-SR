@@ -654,7 +654,7 @@ object FileSystem {
     if (currentOwner?.instanceId == instanceId && currentOwner.pid == pid) {
       return ReinjectionOwnerState(true, currentOwner, false)
     }
-    if (currentOwner != null && isPidAlive(currentOwner.pid)) {
+    if (currentOwner != null && isDaemonOwnerAlive(currentOwner)) {
       return ReinjectionOwnerState(false, currentOwner, false)
     }
 
@@ -709,6 +709,14 @@ object FileSystem {
     return ReinjectionOwner(parts[0], pid, claimedAt)
   }
 
+  private fun isDaemonOwnerAlive(owner: ReinjectionOwner): Boolean {
+    if (!isPidAlive(owner.pid)) return false
+    if (isExpectedDaemonProcess(owner.pid)) return true
+
+    Log.w(TAG, "Ignoring stale reinjection owner `${owner.toLogString()}`: PID was reused")
+    return false
+  }
+
   private fun isPidAlive(pid: Int): Boolean {
     if (pid <= 0) return false
 
@@ -729,6 +737,20 @@ object FileSystem {
           }
         }
         .getOrDefault(procVisible)
+  }
+
+  private fun isExpectedDaemonProcess(pid: Int): Boolean {
+    val cmdlinePath = Paths.get("/proc/$pid/cmdline")
+    return runCatching {
+          val cmdline =
+              String(Files.readAllBytes(cmdlinePath))
+                  .trimEnd('\u0000')
+                  .replace('\u0000', ' ')
+          cmdline == "lspd" ||
+              cmdline.endsWith("/lspd") ||
+              cmdline.contains("org.matrix.vector.daemon.VectorDaemon")
+        }
+        .getOrDefault(false)
   }
 
   private fun nextReinjectionRoundLocked(): Long {
