@@ -21,8 +21,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          submodules: recursive
+          submodules: true
           fetch-depth: 0
+
+      - name: Checkout LSPlant build submodules
+        run: |
+          git -C external/lsplant submodule update --init --recursive lsplant/src/main/jni/external/dex_builder
 
       - name: Write key
         if: ${{ ( github.event_name != 'pull_request' && github.ref == 'refs/heads/master' ) || github.ref_type == 'tag' }}
