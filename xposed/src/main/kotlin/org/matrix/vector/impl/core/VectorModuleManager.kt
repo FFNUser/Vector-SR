@@ -89,6 +89,15 @@ object VectorModuleManager {
                 )
 
             val entries = instantiateEntries(module, moduleClassLoader, vectorContext)
+            if (entries.size != module.file.moduleClassNames.size) {
+                Log.e(
+                    TAG,
+                    "Failed to instantiate all entries for ${module.packageName}: " +
+                        "${entries.size}/${module.file.moduleClassNames.size}",
+                )
+                entries.forEach(VectorLifecycleManager::detach)
+                return false
+            }
             entries.forEach { moduleInstance ->
                 VectorLifecycleManager.activeModules.add(moduleInstance)
                 runCatching {
@@ -243,7 +252,6 @@ object VectorModuleManager {
                     .onFailure {
                         Log.e(TAG, "HOT_RELOADED_CALLBACK_FAILED package=${module.packageName}", it)
                     }
-                    .getOrThrow()
             }
         } finally {
             if (newStateCommitted) {

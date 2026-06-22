@@ -30,7 +30,6 @@ data class ModuleCodeIdentity(
     val apkPath: String?,
     val apkSize: Long,
     val apkLastModified: Long,
-    val configGeneration: Long,
 )
 
 object ConfigCache {
@@ -45,7 +44,6 @@ object ConfigCache {
 
   private val cacheUpdateChannel = Channel<Unit>(Channel.CONFLATED)
 
-  @Volatile private var configGeneration = 0L
   @Volatile private var moduleCodeIdentities = emptyMap<String, ModuleCodeIdentity>()
 
   init {
@@ -182,8 +180,7 @@ object ConfigCache {
               if (oldModule.appId == -1) oldModule.applicationInfo = appInfo
               newModules[pkgName] = oldModule
               newModuleIdentities[pkgName] =
-                  buildModuleCodeIdentity(
-                      pkgName, oldModule.versionCode, oldModule.apkPath, nextGeneration)
+                  buildModuleCodeIdentity(pkgName, oldModule.versionCode, oldModule.apkPath)
               continue
             }
 
@@ -211,7 +208,7 @@ object ConfigCache {
                   }
               newModules[pkgName] = module
               newModuleIdentities[pkgName] =
-                  buildModuleCodeIdentity(pkgName, module.versionCode, apkPath, nextGeneration)
+                  buildModuleCodeIdentity(pkgName, module.versionCode, apkPath)
             } else {
               Log.w(TAG, "Failed to parse DEX/ZIP for $pkgName, skipping.")
               obsoleteModules.add(pkgName)
@@ -278,7 +275,6 @@ object ConfigCache {
     // --- ATOMIC STATE SWAP ---
     state =
         oldState.copy(modules = newModules, scopes = newScopes, configGeneration = nextGeneration)
-    configGeneration = nextGeneration
     moduleCodeIdentities = newModuleIdentities
 
     Log.d(TAG, "Cache Update Complete. Map Swap successful.")
@@ -454,12 +450,7 @@ object ConfigCache {
     }
   }
 
-  private fun buildModuleCodeIdentity(
-      packageName: String,
-      versionCode: Long,
-      apkPath: String?,
-      generation: Long,
-  ): ModuleCodeIdentity {
+  private fun buildModuleCodeIdentity(packageName: String, versionCode: Long, apkPath: String?): ModuleCodeIdentity {
     val file = apkPath?.let { FileSystem.toGlobalNamespace(it) }
     return ModuleCodeIdentity(
         packageName = packageName,
@@ -467,7 +458,6 @@ object ConfigCache {
         apkPath = apkPath,
         apkSize = file?.length() ?: 0L,
         apkLastModified = file?.lastModified() ?: 0L,
-        configGeneration = generation,
     )
   }
 

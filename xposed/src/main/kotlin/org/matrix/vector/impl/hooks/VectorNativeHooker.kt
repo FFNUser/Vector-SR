@@ -171,8 +171,9 @@ private class VectorHookHandle(val record: VectorHookRecord, private val hookKey
             if (!record.isActive()) {
                 throw IllegalStateException("Hook handle is no longer valid")
             }
-            // TODO: HookBridge callbacks are snapshot-based, so Java dispatch sees only active
-            // records, but native install/uninstall is not a single primitive yet.
+            // TODO(API102): implement native HookBridge atomic replacement. The current
+            // Java-level active-record swap prevents duplicate Java callbacks, but native
+            // install/uninstall is not a single primitive and is not full API 102 compliance.
             installRecord(replacement)
             hookKey?.let { key -> HookRegistry.records[key] = replacement }
             uninstallRecord(record)

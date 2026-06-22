@@ -16,6 +16,7 @@ import org.lsposed.lspd.service.IHotReloadTarget
 import org.lsposed.lspd.service.ILSPApplicationService
 import org.matrix.vector.daemon.data.ConfigCache
 import org.matrix.vector.daemon.data.FileSystem
+import org.matrix.vector.daemon.data.ModuleCodeIdentity
 import org.matrix.vector.daemon.utils.InstallerVerifier
 import org.matrix.vector.daemon.utils.ObfuscationManager
 
@@ -63,7 +64,7 @@ object ApplicationService : ILSPApplicationService.Stub() {
       val modulePackageName: String,
       val process: ProcessInfo,
       @Volatile var loadedVersionCode: Long,
-      @Volatile var registeredCodeIdentity: Any?,
+      @Volatile var registeredCodeIdentity: ModuleCodeIdentity?,
       val target: IHotReloadTarget
   ) : IBinder.DeathRecipient {
     val state = AtomicInteger(HookedProcess.TARGET_STATE_UP_TO_DATE)

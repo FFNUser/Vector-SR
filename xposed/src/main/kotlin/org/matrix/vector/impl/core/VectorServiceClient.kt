@@ -31,18 +31,30 @@ object VectorServiceClient : ILSPApplicationService, IBinder.DeathRecipient {
     @Synchronized
     fun init(appService: ILSPApplicationService?, niceName: String) {
         val binder = appService?.asBinder()
-        if (service == null && binder != null) {
-            runCatching {
-                    service = appService
-                    processName = niceName
-                    binder.linkToDeath(this, 0)
-                    pendingHotReloadTargets.values.forEach(::registerHotReloadTargetLocked)
-                }
-                .onFailure {
-                    Log.e(TAG, "Failed to link to death for service in process: $niceName", it)
-                    service = null
-                }
+        if (binder == null) return
+
+        val oldService = service
+        val oldBinder = oldService?.asBinder()
+        if (oldBinder === binder || oldBinder == binder) {
+            processName = niceName
+            return
         }
+
+        runCatching { oldBinder?.unlinkToDeath(this, 0) }
+            .onFailure { Log.w(TAG, "Failed to unlink old service death recipient", it) }
+
+        registeredTargetIds.clear()
+        runCatching {
+                service = appService
+                processName = niceName
+                binder.linkToDeath(this, 0)
+                pendingHotReloadTargets.values.forEach(::registerHotReloadTargetLocked)
+            }
+            .onFailure {
+                Log.e(TAG, "Failed to link to death for service in process: $niceName", it)
+                service = null
+                registeredTargetIds.clear()
+            }
     }
 
     override fun isLogMuted(): Boolean {
@@ -108,8 +120,10 @@ object VectorServiceClient : ILSPApplicationService, IBinder.DeathRecipient {
         return service?.asBinder()
     }
 
+    @Synchronized
     override fun binderDied() {
-        service?.asBinder()?.unlinkToDeath(this, 0)
+        runCatching { service?.asBinder()?.unlinkToDeath(this, 0) }
+            .onFailure { Log.w(TAG, "Failed to unlink dead service", it) }
         service = null
         registeredTargetIds.clear()
     }
