@@ -2,7 +2,9 @@ package org.matrix.vector.impl.core
 
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import java.util.concurrent.ConcurrentHashMap
 import org.lsposed.lspd.models.Module
+import org.lsposed.lspd.service.IHotReloadTarget
 import org.lsposed.lspd.service.ILSPApplicationService
 import org.lsposed.lspd.util.Utils.Log
 
@@ -15,8 +17,16 @@ object VectorServiceClient : ILSPApplicationService, IBinder.DeathRecipient {
     private const val TAG = "VectorServiceClient"
 
     private var service: ILSPApplicationService? = null
+    private val pendingHotReloadTargets = ConcurrentHashMap<String, PendingHotReloadTarget>()
+    private val registeredTargetIds = ConcurrentHashMap<String, Long>()
     var processName: String = ""
         private set
+
+    private data class PendingHotReloadTarget(
+        val modulePackageName: String,
+        val loadedVersionCode: Long,
+        val target: IHotReloadTarget,
+    )
 
     @Synchronized
     fun init(appService: ILSPApplicationService?, niceName: String) {
@@ -26,6 +36,7 @@ object VectorServiceClient : ILSPApplicationService, IBinder.DeathRecipient {
                     service = appService
                     processName = niceName
                     binder.linkToDeath(this, 0)
+                    pendingHotReloadTargets.values.forEach(::registerHotReloadTargetLocked)
                 }
                 .onFailure {
                     Log.e(TAG, "Failed to link to death for service in process: $niceName", it)
@@ -54,6 +65,45 @@ object VectorServiceClient : ILSPApplicationService, IBinder.DeathRecipient {
         return runCatching { service?.requestInjectedManagerBinder(binder) }.getOrNull()
     }
 
+    override fun registerHotReloadTarget(
+        modulePackageName: String,
+        loadedVersionCode: Long,
+        target: IHotReloadTarget,
+    ): Long {
+        val pending = PendingHotReloadTarget(modulePackageName, loadedVersionCode, target)
+        pendingHotReloadTargets[modulePackageName] = pending
+        return registerHotReloadTargetLocked(pending)
+    }
+
+    @Synchronized
+    private fun registerHotReloadTargetLocked(pending: PendingHotReloadTarget): Long {
+        val currentService = service
+        if (currentService == null) {
+            Log.w(
+                TAG,
+                "Cannot register hot reload target for ${pending.modulePackageName} in $processName: service unavailable",
+            )
+            return -1L
+        }
+        return runCatching {
+                currentService.registerHotReloadTarget(
+                    pending.modulePackageName,
+                    pending.loadedVersionCode,
+                    pending.target,
+                )
+            }
+            .onSuccess { registeredTargetIds[pending.modulePackageName] = it }
+            .onFailure {
+                registeredTargetIds.remove(pending.modulePackageName)
+                Log.e(
+                    TAG,
+                    "Failed to register hot reload target package=${pending.modulePackageName} process=$processName versionCode=${pending.loadedVersionCode}: ${it.message}",
+                    it,
+                )
+            }
+            .getOrDefault(-1L)
+    }
+
     override fun asBinder(): IBinder? {
         return service?.asBinder()
     }
@@ -61,5 +111,6 @@ object VectorServiceClient : ILSPApplicationService, IBinder.DeathRecipient {
     override fun binderDied() {
         service?.asBinder()?.unlinkToDeath(this, 0)
         service = null
+        registeredTargetIds.clear()
     }
 }
